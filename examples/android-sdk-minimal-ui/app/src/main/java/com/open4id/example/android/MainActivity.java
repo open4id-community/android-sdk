@@ -127,7 +127,7 @@ public class MainActivity extends Activity {
         try {
             client.configure(text(appId), text(environment), text(publicKey),
                     text(endpoint), text(redirectUri), null,
-                    getPackageName(), null);
+                    getPackageName());
             current = client;
         } catch (RuntimeException e) {
             android.widget.Toast.makeText(this, "configure: " + e.getMessage(),
@@ -155,7 +155,7 @@ public class MainActivity extends Activity {
         try {
             client.configure(text(appId), text(environment), text(publicKey),
                     text(endpoint), text(redirectUri), null,
-                    getPackageName(), null);
+                    getPackageName());
             current = client;
         } catch (RuntimeException e) {
             android.widget.Toast.makeText(this, "configure: " + e.getMessage(),
@@ -175,11 +175,11 @@ public class MainActivity extends Activity {
     }
 
     private void showLoginDialog(AuthTypes.Bootstrap bootstrap) {
-        Open4IDLoginDialog dialog = new Open4IDLoginDialog(this);
-        dialog.setLocale("en");
-        dialog.setBootstrap(bootstrap);
-        dialog.setAuthClient(client);
-        dialog.addAuthListener(new Open4IDAuthView.AuthListener() {
+        // One-call bind-and-show; the returned dialog is closed
+        // explicitly on sign-out/account-deleted (sign-in auto-closes).
+        final Open4IDLoginDialog[] holder = new Open4IDLoginDialog[1];
+        holder[0] = Open4IDLoginDialog.show(this, client, bootstrap, "en",
+                new Open4IDAuthView.AuthListener() {
             @Override
             public void onSignedIn(String provider) {
                 android.util.Log.i("Open4ID", "login dialog signed in via " + provider);
@@ -188,14 +188,15 @@ public class MainActivity extends Activity {
             @Override
             public void onSignedOut() {
                 android.util.Log.i("Open4ID", "login dialog signed out");
+                holder[0].close();
             }
 
             @Override
             public void onAccountDeleted() {
                 android.util.Log.i("Open4ID", "login dialog account deleted");
+                holder[0].close();
             }
         });
-        dialog.show();
     }
 
     private void showLoginUi(AuthTypes.Bootstrap bootstrap) {        Open4IDAuthView login = new Open4IDAuthView(this);

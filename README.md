@@ -25,7 +25,7 @@ Published to Maven Central as `com.open4id:open4id-sdk` ([changelog](CHANGELOG.m
 
 ```gradle
 dependencies {
-    implementation 'com.open4id:open4id-sdk:0.3.1'
+    implementation 'com.open4id:open4id-sdk:0.3.2'
 }
 ```
 
@@ -100,7 +100,7 @@ client.configure(
         "com.example.game://open4id/callback", // redirectUri — exact registered URI
         "openid profile email",               // scope (optional, must include openid)
         "com.example.game",                   // packageName — exact registered package
-        null                                  // SessionStore (optional, defaults to memory)
+        null                                  // SessionStore (optional, defaults to the persisted snapshot store)
 );
 
 // Off the main thread:
@@ -653,7 +653,10 @@ and flags before any public release (tracked in the project handoff).
 
 - `sdk_sk_...` never in client; only `sdk_pk_...` in JSON bodies
 - PKCE verifier, authorization codes, refresh tokens never logged
-- Memory-only default storage; encrypted adapter recommended on shared devices
+- Session snapshot persisted by default in private `SharedPreferences`
+  (`open4id_session`, auto-wired through the init provider; memory-only
+  when no app context is available); encrypted store recommended on
+  shared devices
 - Custom Tabs used for all external auth (no WebView)
 - Play Services auth degrades to typed error when absent (never `NoClassDefFoundError`)
 

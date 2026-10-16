@@ -6,7 +6,7 @@ flows, no build tricks. It exercises bootstrap, email
 register/sign-in, guest sign-in, session refresh, and sign-out against
 the local dev Core API.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.3.1` from Maven
+It needs the published SDK (`com.open4id:open4id-sdk:0.3.2` from Maven
 Central, pinned in `app/build.gradle`).
 
 ## Prerequisites

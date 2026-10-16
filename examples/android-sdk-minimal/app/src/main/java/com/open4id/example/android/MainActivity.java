@@ -99,7 +99,7 @@ public class MainActivity extends Activity {
     private void configureClient() {
         client.configure(text(appId), text(environment), text(publicKey),
                 text(endpoint), text(redirectUri), null,
-                getPackageName(), null);
+                getPackageName());
     }
 
     private void onBootstrap() {
