@@ -177,9 +177,7 @@ in-memory successful snapshot. `configure()` resets all session state
 
 ## Login view (`com.open4id.sdk.ui`)
 
-`Open4IDAuthView` is the Android port of the web `<open4id-auth>`
-element: a `LinearLayout` (platform widgets only, no new dependency)
-that renders sign-in, sign-up, forgot-password, link-email, and
+`Open4IDAuthView` renders sign-in, sign-up, forgot-password, link-email, and
 delete-account modes from safe bootstrap readiness. Provider buttons
 carry the inline brand marks (Google, GitHub, Apple vector drawables —
 no host assets needed). The view shows only the login methods the
@@ -223,7 +221,7 @@ your listener with `removeAuthListener` when done.
 ```java
 login.setMode(AuthLayout.Mode.SIGN_UP); // sign-in (default) | sign-up |
     // forgot-password | link-email | delete-account
-login.setLocale("vi");                  // en default, vi built in
+login.setLocale("en");                  // en default, vi built in
 login.setAppName("My Game");            // default: bootstrap displayName
 ```
 
@@ -236,7 +234,6 @@ each provider console. The Portal origin defaults to production
 Portal instead:
 
 ```java
-client.setPortalOrigin("http://localhost:4200"); // dev only; default is production
 // Explicit per-call/per-view overrides still win when you host your own
 // callback pages (e.g. an http(s) redirect keeps its origin-derived default):
 login.setGitHubCallbackUri("https://game.example.com/github-callback");
