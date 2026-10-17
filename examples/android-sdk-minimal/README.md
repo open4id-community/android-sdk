@@ -44,6 +44,9 @@ failures render as stable error keys (`client.*`, `system.*`).
 
 - Sessions live in SDK instance memory only and vanish on process
   death; pass a `SessionStore` to `setSessionStore()` to persist.
+- The activity registers `client.onAuthStateChanged(...)` so the main app
+  can react to any auth state change (sign-in, sign-out, refresh,
+  deletion).
 - Social sign-in (Google/GitHub/Apple) is intentionally out of scope
   here — see `sdks/android/sample` (project dependency) for the full
   Custom Tab flows, and `../android-sdk-minimal-ui` for the drop-in

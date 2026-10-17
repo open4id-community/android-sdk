@@ -1,6 +1,8 @@
 package com.open4id.example.android;
 
 import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -9,7 +11,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
 import com.open4id.sdk.AuthTypes;
-import com.open4id.sdk.Open4IDAuthClient;
 import com.open4id.sdk.ui.Open4IDAuthView;
 import com.open4id.sdk.ui.Open4IDLoginDialog;
 
@@ -29,7 +30,7 @@ import com.open4id.sdk.ui.Open4IDLoginDialog;
  * {@code client.bootstrap.invalid}.
  */
 public class MainActivity extends Activity {
-    private final Open4IDAuthClient client = new Open4IDAuthClient();
+    private SocialAuthClient client;
     private EditText appId;
     private EditText environment;
     private EditText publicKey;
@@ -40,10 +41,14 @@ public class MainActivity extends Activity {
     // API 33+ routes system Back through the invoked-dispatcher (the
     // onBackPressed override below only runs on older releases).
     private android.window.OnBackInvokedCallback backInvokedCallback;
+    // Listens to auth state changes from any source (Google, GitHub, Apple,
+    // email/password, guest, refresh, sign-out, deletion).
+    private Runnable authStateListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        client = new SocialAuthClient(this);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -92,6 +97,19 @@ public class MainActivity extends Activity {
         }
         setContentView(outer);
         applyLightStatusBar();
+        // Listen to auth state changes from any source so the main app
+        // can react (e.g. show game lobby when signed in).
+        authStateListener = client.onAuthStateChanged((session, user) -> {
+            if (session != null) {
+                android.widget.Toast.makeText(MainActivity.this,
+                        "auth state: signed in sub=" + session.userId,
+                        android.widget.Toast.LENGTH_LONG).show();
+            } else {
+                android.widget.Toast.makeText(MainActivity.this,
+                        "auth state: signed out",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     /**
@@ -115,6 +133,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (authStateListener != null) {
+            authStateListener.run();
+        }
         if (backInvokedCallback != null
                 && android.os.Build.VERSION.SDK_INT >= 33) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
@@ -123,7 +144,7 @@ public class MainActivity extends Activity {
     }
 
     private void openLoginUi() {
-        Open4IDAuthClient current;
+        SocialAuthClient current;
         try {
             client.configure(text(appId), text(environment), text(publicKey),
                     text(endpoint), text(redirectUri), null,
@@ -151,7 +172,7 @@ public class MainActivity extends Activity {
      * an {@link Open4IDLoginDialog} instead of a full-screen swap.
      */
     private void openLoginDialog() {
-        Open4IDAuthClient current;
+        SocialAuthClient current;
         try {
             client.configure(text(appId), text(environment), text(publicKey),
                     text(endpoint), text(redirectUri), null,
@@ -255,6 +276,25 @@ public class MainActivity extends Activity {
             return;
         }
         super.onBackPressed();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (SocialAuthClient.completeGoogleSignIn(requestCode, data)) {
+            return;
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && SocialAuthClient.completeDeepLink(intent.getData())) {
+            runOnUiThread(() -> android.widget.Toast.makeText(MainActivity.this,
+                    "provider callback received, exchanging…",
+                    android.widget.Toast.LENGTH_SHORT).show());
+        }
     }
 
     private EditText field(LinearLayout root, String initial) {

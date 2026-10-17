@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Minimal login-view host: email/guest flows only, so no deep-link
-     filter (Custom Tab callbacks are out of scope here).
-     Cleartext is dev-only (plain-http loopback to the local Core API). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -12,10 +9,22 @@
         android:theme="@android:style/Theme.Material.Light">
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Mobile bridge for the GitHub Custom Tab flow: the hosted
+                 game callback page links back here with ?code&state. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="com.open4id.example.android"
+                    android:host="open4id"
+                    android:pathPrefix="/" />
             </intent-filter>
         </activity>
     </application>

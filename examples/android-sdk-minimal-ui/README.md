@@ -42,6 +42,29 @@ email), sign in, continue as guest, or request a password reset. The
 view remembers the session while the client lives; the auth listener
 logs sign-in/sign-out/deletion to logcat (`Open4ID` tag).
 
+**Social sign-in:** Google, GitHub, and Apple buttons in the login UI
+work through `SocialAuthClient`, a sample-only subclass of
+`Open4IDAuthClient` (`app/src/main/java/.../SocialAuthClient.java`) that
+overrides the SDK's social seams:
+- **Google** — interactive `GoogleSignInIntent` account picker (always
+  returns a fresh server auth code; the SDK default can resolve
+  silently with an empty code).
+- **GitHub / Apple** — Custom Tab + deep-link callback via
+  `/github-callback` / `/apple-callback` (see
+  `AndroidManifest.xml` intent-filter).
+Requires `play-services-auth` and `androidx.browser` as `implementation`
+deps (in `app/build.gradle`).
+
+Google/GitHub/Apple bridges need their own registration (provider
+consoles plus the per-app Portal bridge URLs) — email and guest work
+with the dev registration above.
+
+## Auth state events
+
+The activity registers `client.onAuthStateChanged(...)` so the main app
+can react to any auth state change (sign-in, sign-out, refresh,
+deletion) from any source — headless calls or the login UI/dialog.
+
 ## Notes
 
 - The login UI screen is a view swap, not a new activity: the on-screen
@@ -49,11 +72,5 @@ logs sign-in/sign-out/deletion to logcat (`Open4ID` tag).
   screen (a `fitsSystemWindows` guard keeps the Back button below the
   status bar on edge-to-edge displays); system Back on the config
   screen exits the app as usual.
-
-- The view's social buttons render per bootstrap readiness, but the
-  Google/GitHub/Apple bridges need their own registration (provider
-  consoles plus the per-app Portal bridge URLs) — email and guest work
-  with the dev registration above. The full Custom Tab flows live in
-  `sdks/android/sample`.
 - Sessions live in SDK instance memory only and vanish on process
   death; pass a `SessionStore` to `setSessionStore()` to persist.

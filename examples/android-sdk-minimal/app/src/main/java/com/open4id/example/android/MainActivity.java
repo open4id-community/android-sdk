@@ -32,6 +32,9 @@ public class MainActivity extends Activity {
     private EditText email;
     private EditText password;
     private TextView log;
+    // Listens to auth state changes from any source (sign-in, sign-out,
+    // refresh, deletion).
+    private Runnable authStateListener;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +78,15 @@ public class MainActivity extends Activity {
         outer.setFitsSystemWindows(true);
         setContentView(outer);
         applyLightStatusBar();
+        // Listen to auth state changes from any source so the main app
+        // can react (e.g. show game lobby when signed in).
+        authStateListener = client.onAuthStateChanged((session, user) -> {
+            if (session != null) {
+                appendLog("auth state: signed in sub=" + session.userId);
+            } else {
+                appendLog("auth state: signed out");
+            }
+        });
     }
 
     /**
@@ -224,5 +236,13 @@ public class MainActivity extends Activity {
     private static String rootMessage(Throwable error) {
         Throwable cause = error.getCause() != null ? error.getCause() : error;
         return String.valueOf(cause.getMessage());
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (authStateListener != null) {
+            authStateListener.run();
+        }
+        super.onDestroy();
     }
 }
