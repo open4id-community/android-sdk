@@ -401,7 +401,7 @@ GitHub and Apple have no platform API (and WebView is forbidden for
 auth), so the base SDK leaves the browser seam to the host: subclass
 and override `openGitHubCustomTab` / `openAppleCustomTab` (open the
 provider URL in a Custom Tab, await your deep link, return the code —
-the `sample/` app's `GitHubTabClient` is the reference implementation).
+the `sample/` app's `SocialAuthClient` is the reference implementation).
 The provider readiness gate (`client.auth.provider_unavailable`), the
 closed/denied mapping (`popup_closed` / `access_denied`), and the
 120s user-interaction budget mirror the Google flow.
@@ -585,14 +585,20 @@ package name on every request, the custom-scheme redirect
 (`com.open4id.example.android://open4id/callback`), and no `Origin`
 header anywhere — the same shape production apps use.
 
+The activity registers `client.onAuthStateChanged(...)` so the main app
+can react to any auth state change (sign-in, sign-out, refresh,
+deletion) from any source — headless calls or the login UI/dialog.
+
 Google Console prerequisites for the App's client ID: provider enabled
 in Authentication config, and the sample package
 (`com.open4id.example.android`) plus your debug SHA-1 linked to the Web
 client ID in the same project (debug key):
 `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey`.
 The sample overrides the SDK code fetch with the interactive
-`GoogleSignInClient` intent, so the account picker always appears and
-every sign-in returns a fresh server auth code. GitHub uses the per-app
+`GoogleSignInClient` intent via `SocialAuthClient`
+(`sdks/android/sample/src/main/java/com/open4id/example/android/SocialAuthClient.java`),
+so the account picker always appears and every sign-in returns a fresh
+server auth code. GitHub uses the per-app
 Portal bridge `https://app.open4id.com/github-callback/com.open4id.example.android`
 (registered in the GitHub OAuth App settings). The sample implements the
 Apple Custom Tab seam with the email scope
