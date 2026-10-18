@@ -7,7 +7,7 @@ and delete-account come with the view; this activity only creates the
 headless client, bootstraps it, binds both to the view, and listens
 for sign-in/sign-out/account-deleted.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.3.2` from Maven
+It needs the published SDK (`com.open4id:open4id-sdk:0.3.3` from Maven
 Central, pinned in `app/build.gradle`).
 
 ## Prerequisites
@@ -42,18 +42,15 @@ email), sign in, continue as guest, or request a password reset. The
 view remembers the session while the client lives; the auth listener
 logs sign-in/sign-out/deletion to logcat (`Open4ID` tag).
 
-**Social sign-in:** Google, GitHub, and Apple buttons in the login UI
-work through `SocialAuthClient`, a sample-only subclass of
-`Open4IDAuthClient` (`app/src/main/java/.../SocialAuthClient.java`) that
-overrides the SDK's social seams:
-- **Google** — interactive `GoogleSignInIntent` account picker (always
-  returns a fresh server auth code; the SDK default can resolve
-  silently with an empty code).
-- **GitHub / Apple** — Custom Tab + deep-link callback via
-  `/github-callback` / `/apple-callback` (see
-  `AndroidManifest.xml` intent-filter).
-Requires `play-services-auth` and `androidx.browser` as `implementation`
-deps (in `app/build.gradle`).
+**Social sign-in:** GitHub and Apple work out of the SDK: pass the host
+`Activity` to the client (e.g. `new Open4IDAuthClient(this)` or
+`setHostActivity`), register the `/github-callback` / `/apple-callback`
+custom-scheme intent filter (see `AndroidManifest.xml`), and forward the
+deep link to `client.completeDeepLink(...)`. Google still needs the
+sample-only `SocialAuthClient` subclass (this module's
+`SocialAuthClient.java`) for the interactive `GoogleSignInIntent` account
+picker, which requires `com.google.android.gms.auth.api.signin`
+({@code play-services-auth}).
 
 Google/GitHub/Apple bridges need their own registration (provider
 consoles plus the per-app Portal bridge URLs) — email and guest work

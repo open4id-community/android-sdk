@@ -28,12 +28,11 @@ android {
 }
 
 dependencies {
-    // Published SDK (Maven Central). No project() dependency: this
-    // example consumes exactly what game developers consume.
-    implementation 'com.open4id:open4id-sdk:0.3.2'
+    // Published SDK (Maven Central): consumes exactly what game developers consume.
+    implementation 'com.open4id:open4id-sdk:0.3.3'
     // Play Services is compileOnly in the SDK: the host must add it as
-    // implementation for Google sign-in to work at runtime.
+    // implementation for Google sign-in to work at runtime. GitHub / Apple
+    // Custom Tabs come from the SDK (androidx.browser is its runtime dep);
+    // only Google still needs play-services-auth here.
     implementation 'com.google.android.gms:play-services-auth:21.2.0'
-    // Custom Tabs for the GitHub social flow (mirrors the SDK's own dep).
-    implementation 'androidx.browser:browser:1.9.0'
 }

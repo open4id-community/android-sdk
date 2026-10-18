@@ -290,7 +290,7 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (intent != null && SocialAuthClient.completeDeepLink(intent.getData())) {
+        if (intent != null && client.completeDeepLink(intent.getData())) {
             runOnUiThread(() -> android.widget.Toast.makeText(MainActivity.this,
                     "provider callback received, exchanging…",
                     android.widget.Toast.LENGTH_SHORT).show());

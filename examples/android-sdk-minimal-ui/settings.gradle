@@ -10,7 +10,14 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        mavenLocal()
     }
+    // only if use local sdk version
+    // plugins {
+    //     id 'com.android.library' version '9.4.1'
+    //     id 'com.android.application' version '9.4.1'
+    //     id 'com.vanniktech.maven.publish' version '0.37.0'
+    // }
 }
 rootProject.name = "android-sdk-minimal-ui"
 include(":app")
