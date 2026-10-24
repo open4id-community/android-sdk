@@ -30,5 +30,5 @@ android {
 dependencies {
     // Published SDK (Maven Central). No project() dependency: this
     // example consumes exactly what game developers consume.
-    implementation 'com.open4id:open4id-sdk:0.3.3'
+    implementation 'com.open4id:open4id-sdk:0.4.1'
 }

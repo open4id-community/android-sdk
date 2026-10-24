@@ -7,7 +7,7 @@ and delete-account come with the view; this activity only creates the
 headless client, bootstraps it, binds both to the view, and listens
 for sign-in/sign-out/account-deleted.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.3.3` from Maven
+It needs the published SDK (`com.open4id:open4id-sdk:0.4.1` from Maven
 Central, pinned in `app/build.gradle`).
 
 ## Prerequisites
