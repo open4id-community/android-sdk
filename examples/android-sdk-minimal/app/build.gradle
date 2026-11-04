@@ -28,8 +28,8 @@ android {
 }
 
 dependencies {
-    implementation 'com.open4id:open4id-sdk:0.5.0'
-    // Play Billing is compileOnly in the SDK: the host owns the store client.
-    // This example mirrors the sample: buy through Play, forward the token.
-    implementation 'com.android.billingclient:billing:9.1.0'
+    // Published SDK (Maven Central). No project() dependency: this
+    // example consumes exactly what game developers consume. Play Billing
+    // comes from the SDK itself (built-in store, 0.6.0+).
+    implementation 'com.open4id:open4id-sdk:0.6.0'
 }

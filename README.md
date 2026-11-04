@@ -14,8 +14,9 @@ sign-in.
 
 | Dependency | Purpose |
 |------------|---------|
-| `androidx.browser:browser:1.9.0` | Custom Tabs (sole runtime exception to zero-dependency rule) |
+| `androidx.browser:browser:1.9.0` | Custom Tabs (auth flows) |
 | `com.google.android.gms:play-services-auth:21.2.0` | Google server-auth-code flow (compileOnly, optional at runtime) |
+| `com.android.billingclient:billing:9.1.0` | Built-in Play Billing store (inert without Play services; declare `com.android.vending.BILLING`) |
 
 No third-party JSON, HTTP, or crypto libraries. All wire parsing uses pure Java (`java.util`, `java.security`, `java.net`).
 
@@ -541,14 +542,66 @@ client.onServerCallbackError(error -> {
 });
 ```
 
-## Payments and entitlements (headless)
+## Payments and entitlements
 
-The SDK does not sell anything: it has no purchase sheet and no store
-dependency. The game buys through Unity IAP or the native
-Play Billing client, then forwards the Play purchase token here. Core API
-re-verifies the token with Google before granting an entitlement, so the
-client claim is only a hint. Only `google_play` proofs are submitted from
-Android; the iOS SDK owns `app_store`.
+The SDK does not sell anything: Core API re-verifies every proof with the
+store before granting an entitlement, so the client claim is only a hint.
+Two ways to buy, both feeding the same verification surface:
+
+- **Built-in Play Billing store** (`client.playBillingPayments(activity)`,
+  0.6.0+): the SDK owns the Play sheet, verification, and the
+  acknowledge/consume lifecycle, and registers itself as the restore proof
+  source — the Android analogue of the iOS SDK's `storeKitPayments()`.
+- **Headless proofs** (any store client: Unity IAP, RevenueCat, your own
+  billing wrapper): the host buys anywhere and forwards the Play purchase
+  token with `verifyTransaction` / `verifyConsumable`. Only `google_play`
+  proofs are submitted from Android; the iOS SDK owns `app_store`.
+
+### Built-in Play Billing store
+
+The built-in store carries the full purchase lifecycle. Hosts must declare
+the `com.android.vending.BILLING` permission; the store is inert without
+Play services (typed store-unavailable errors, never a crash).
+
+```java
+// One call per client: creates the store and registers its proof source,
+// so payments().restore() becomes self-sufficient (restart + reinstall).
+Open4IDPlayBillingStore store = client.playBillingPayments(activity);
+
+// Shop: catalog rows for google_play resolved with Play prices. Rows Play
+// cannot resolve come back with isResolvable() == false (disable the Buy
+// button); a store error (network, Play unreachable) fails the load.
+store.loadProducts().whenComplete((rows, error) -> {
+    for (Open4IDPlayBillingStore.PlayStoreProduct row : rows) {
+        // row.product (catalog entry), row.formattedPrice, row.isResolvable()
+    }
+});
+
+// Buy: Play sheet -> server verification -> acknowledge (or consume for a
+// consumable) after the server accepted the proof. Branch on the outcome.
+store.purchase("sku_premium").whenComplete((outcome, error) -> {
+    if (error != null) { /* 160003 store: retry; 140006: sticky owner */ return; }
+    if (outcome.isVerified()) {
+        // one_time/subscription: grant from outcome.entitlements
+        // consumable: grant from outcome.receipt (transactionRef, quantity)
+    } else if (outcome.isPending()) {
+        // ask-to-buy: nothing verified yet; a later restore picks it up
+    } // else cancelled
+});
+
+// Restore: ledger recompute + the purchases Play reports for this store
+// account. After the server accepted every proof, purchases restored from
+// another device are acknowledged/consumed here too.
+store.restore().whenComplete((result, error) -> {
+    // result.entitlements, result.verified, result.rejected,
+    // result.conflict, result.hasConflict(), result.proofsUnavailable
+});
+```
+
+### Headless proofs (bring your own store client)
+
+The game buys through Unity IAP or the native
+Play Billing client, then forwards the Play purchase token here.
 
 ```java
 // Catalog comes from the bootstrap snapshot (no network call).
@@ -577,9 +630,10 @@ client.payments().restore().whenComplete((result, error) -> {
     // result.hasConflict(), result.proofsUnavailable
 });
 
-// Optional but recommended: one registration makes restore() self-sufficient
-// at app start and behind "Restore purchases". The source is the billing
-// client the host already owns — the SDK stays free of store dependencies.
+// Optional but recommended for a custom store client: one registration
+// makes restore() self-sufficient at app start and behind "Restore
+// purchases" (the built-in store registers its source automatically).
+// The source is the billing client the host already owns.
 client.payments().setProofSource(() -> {
     List<PaymentTypes.TransactionProof> proofs = new ArrayList<>();
     // PlayBillingClient.queryPurchasesAsync(INAPP + SUBS): one proof per
@@ -818,20 +872,17 @@ exactly like the query flow; Apple requests `scope=email` with
 `response_mode=form_post` so first-time sign-in carries a verified
 address.
 
-The **Payments** screen (third panel) runs a real Play Billing client
-(sample-only — the SDK keeps zero store dependencies): enter a Play product id,
-tap **Buy with Play Billing**, and the returned purchase token is filled into
-the token field and verified against Core API automatically. The sample picks
-the Play product type from the catalog: `subscription` entries are queried as
-`SUBS` and bought with the first active base plan's offer token (a prepaid base
-plan has no offers, so its own offer token is used), everything else as
-`INAPP`. If the id is missing under the expected type it retries the other type
-and logs both attempts, which distinguishes a wrong catalog `type` from a
-product that is genuinely inactive in Play. A consumable
-catalog entry goes through `verifyConsumable`, and the sample consumes the
-token again as a no-op because the server already consumed it; every other
-purchase is acknowledged once Core API accepts the proof (so Play does not
-auto-refund it after three days). Verification needs a signed-in player, and
+The **Payments** screen (third panel) drives the SDK's built-in Play Billing
+store (`client.playBillingPayments(activity)`): the shop rows load with Play
+prices, **Buy with Play Billing** opens the real Play sheet, verifies through
+Core API, and acknowledges/consumes only after the server accepted the proof.
+The store picks the Play product type from the catalog: `subscription` entries
+are queried as `SUBS` and bought with the first active base plan's offer
+token, everything else as `INAPP`; a miss under the expected type retries the
+other type, which distinguishes a wrong catalog `type` from a product that is
+genuinely inactive in Play. A verified consumable logs its
+`transactionRef` receipt; a verified one-time/subscription logs the
+recomputed entitlements. Verification needs a signed-in player, and
 purchases use a license-tester account for free test instruments. A license
 tester can also test a **sideloaded** release or debug APK: Play bypasses its
 "signed and uploaded to Play" check for testers, provided the package name
@@ -846,12 +897,11 @@ Status 2026-10-26: a license tester bought a one-time product
 release APK; the consumable purchase/refund pass and the Play-installed pass
 are still outstanding.
 
-The screen also registers the Play client as the SDK's proof source
-(`client.payments().setProofSource(billing::collectProofs)`), so **Restore
+The built-in store registers its proof source on creation, so **Restore
 purchases** and the restore that runs when the screen opens both recompute the
 ledger *and* re-submit every purchase Play reports for the account — the
-reinstall case. The sample finishes restored purchases only after Core API
-accepted the proofs (consuming consumables, acknowledging everything else) and
+reinstall case — and finish restored purchases only after Core API accepted
+the proofs (consuming consumables, acknowledging everything else). The screen
 logs `verified`/`rejected`/`conflict` plus `store proofs unavailable` when Play
 could not be queried. **List payment purchases** reads the player's ledger
 receipts (newest first) so the refund path is exercised: the sample logs

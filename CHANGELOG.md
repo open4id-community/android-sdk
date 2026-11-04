@@ -3,6 +3,33 @@
 All notable changes to the Open4ID Android SDK are documented here.
 Coordinates: `com.open4id:open4id-sdk` on Maven Central.
 
+## 0.6.0
+
+- **Built-in Play Billing store**: `client.playBillingPayments(activity)`
+  returns a store that owns the whole purchase lifecycle, the Android
+  analogue of the iOS SDK's `storeKitPayments()`:
+  `loadProducts()` resolves the `google_play` catalog rows with Play prices
+  (rows Play cannot resolve come back flagged, a store *error* fails the
+  load), `purchase(product|productId)` opens the Play sheet and verifies
+  through Core API — `verifyTransaction` for one_time/subscription,
+  `verifyConsumable` for a consumable — then acknowledges (or consumes)
+  only after the server accepted the proof. The outcome is one value to
+  branch on: `verified` (grant from `entitlements`/`receipt`), `pending`
+  (ask-to-buy; a later restore picks it up), `cancelled`. The store
+  registers itself as the payments proof source, so
+  `payments().restore()` / `store.restore()` is self-sufficient after a
+  restart and after a reinstall (fresh guest; the store proof moves the
+  anonymous binding), and `store.restore()` finishes restored purchases
+  (consume consumables, acknowledge the rest) only after the server
+  accepted every proof. Connection handling (billing 9.x, one-time pending
+  purchases, auto service reconnection, main-thread sheet) lives inside
+  the SDK. Hosts must declare `com.android.vending.BILLING`; the store is
+  inert without Play services (typed `SdkStoreUnavailableError`).
+  The store dependency is now part of the artifact: the headless surface
+  (Unity IAP hosts forwarding purchase tokens) is unchanged, so the
+  contract becomes "no *mandatory* store dependency".
+- Play Billing 9.1.0 ships as an `api` dependency of the SDK artifact.
+
 ## 0.5.0
 
 - **Google Play consumables**: catalog entries of type `consumable` are

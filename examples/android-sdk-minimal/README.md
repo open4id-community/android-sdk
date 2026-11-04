@@ -6,10 +6,10 @@ flows, no build tricks. It exercises bootstrap, email
 register/sign-in, guest sign-in, session refresh, sign-out, and the
 payments surface against the local dev Core API.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.5.0` from Maven
-Central, pinned in `app/build.gradle`) plus the example-owned
-`com.android.billingclient:billing` dependency for the sandbox purchase
-sheet — the SDK itself has no store dependency.
+It needs the published SDK (`com.open4id:open4id-sdk:0.6.0` from Maven
+Central, pinned in `app/build.gradle`) — Play Billing 9.x ships inside the
+SDK since 0.6.0: the built-in store owns the sheet, verification, and the
+acknowledge lifecycle, so the example adds no store dependency of its own.
 
 ## Prerequisites
 
@@ -44,28 +44,33 @@ failures render as stable error keys (`client.*`, `system.*`).
 
 ## Payments (Play Billing)
 
-**5. Payments (Play Billing)** opens a self-contained payments screen
-that mirrors `sdks/android/sample`:
+**5. Payments (Play Billing)** opens a self-contained payments screen that
+drives the SDK's built-in Play Billing store
+(`client.playBillingPayments(activity)`) — the same surface
+`sdks/android/sample` shows:
 
 - The catalog comes from the bootstrap snapshot (`payments().products()`),
   filtered to `google_play` rows — the product ids must exist in the
-  Play Console for the package.
-- **Buy with Play Billing** opens the real Play sheet (a license-tester
-  account buys with a test instrument), then forwards the purchase
-  token through `payments().verifyTransaction(...)` — or
-  `payments().verifyConsumable(...)` for a catalog `consumable` row,
-  which returns a `transactionRef` receipt instead of entitlements.
-  One-time purchases are acknowledged only after Core API accepts the
-  proof (otherwise Play auto-refunds after three days); consumables are
-  consumed.
+  Play Console for the package. The screen loads the shop with Play prices
+  (`store().loadProducts()`); rows Play cannot resolve are logged as
+  unresolvable (a Buy button would be disabled), a store *error* fails the
+  load.
+- **Buy with Play Billing** runs `store().purchase(productId)`: the real
+  Play sheet (a license-tester account buys with a test instrument) →
+  `verifyTransaction` (one_time/subscription) or `verifyConsumable`
+  (consumable, which returns a `transactionRef` receipt instead of
+  entitlements) → acknowledge/consume only after Core API accepts the
+  proof (otherwise Play auto-refunds after three days). A cancelled sheet
+  logs `cancelled`; ask-to-buy logs `pending` — a later restore picks it
+  up.
 - **Restore purchases** and the screen-open restore both call
-  `payments().restore()` through the proof source registered with
-  `payments().setProofSource(billing::collectProofs)` — Play's
-  `queryPurchasesAsync` over `INAPP` + `SUBS`. That makes the same call
-  recover purchases after a restart (stored session) and after a
-  reinstall (fresh guest; the store proof moves the anonymous binding).
-  Restored purchases are acknowledged only after the server accepted
-  every proof.
+  `store().restore()` — the ledger recompute plus the purchases Play
+  reports for the store account (the proof source the store registered on
+  creation, Play's `queryPurchasesAsync` over `INAPP` + `SUBS`). That
+  makes the same call recover purchases after a restart (stored session)
+  and after a reinstall (fresh guest; the store proof moves the anonymous
+  binding). Restored purchases are acknowledged/consumed only after the
+  server accepted every proof.
 - **List payment purchases** reads the player's ledger receipts
   (`payments().purchases()`) — how a game learns about consumable
   deliveries and refunds while webhook delivery is not implemented.

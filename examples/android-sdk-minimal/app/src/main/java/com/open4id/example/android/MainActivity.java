@@ -11,6 +11,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import com.open4id.sdk.Open4IDAuthClient;
+import com.open4id.sdk.Open4IDPlayBillingStore;
 import com.open4id.sdk.PaymentTypes;
 
 /**
@@ -42,9 +43,9 @@ public class MainActivity extends Activity {
     private android.window.OnBackInvokedCallback backInvokedCallback;
     /** Detaches the payment screen's entitlement listener on exit. */
     private Runnable paymentsUnsubscribe;
-    // Example-owned real Play Billing client for sandbox purchases; the
-    // SDK has no store dependency and never opens a purchase sheet.
-    private PlayBillingHelper billing;
+    // The SDK's built-in Play Billing store (created on first open); the
+    // SDK owns the sheet, verification, and the acknowledge lifecycle.
+    private Open4IDPlayBillingStore store;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -233,13 +234,13 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Payments screen: the headless payment surface behind a real
-     * example-owned Play Billing client (billing 9.x). The SDK has no store
-     * dependency: Play produces the purchase token, the SDK verifies it
-     * server-side through Core API. Opening the screen and the "Restore
-     * purchases" button both call {@code payments().restore()}, which uses
-     * the proof source registered below — so the same call recovers a
-     * purchase after a restart and after a reinstall.
+     * Payments screen: the SDK's built-in Play Billing store owns the whole
+     * purchase lifecycle (sheet → verification → acknowledge/consume after
+     * acceptance), so the example only drives it and logs every step.
+     * Opening the screen and the "Restore purchases" button both call
+     * {@code store.restore()}, which uses the proof source the store
+     * registered — so the same call recovers a purchase after a restart and
+     * after a reinstall.
      */
     private void openPayments() {
         try {
@@ -248,14 +249,11 @@ public class MainActivity extends Activity {
             appendLog("configure: " + e.getMessage());
             return;
         }
-        if (billing == null) {
-            billing = new PlayBillingHelper(this, this::appendLog);
+        if (store == null) {
+            // One call per client: creates the store and registers its
+            // proof source, so restore() is self-sufficient.
+            store = client.playBillingPayments(this);
         }
-        // One registration makes restore() self-sufficient: it asks Play
-        // which purchases this store account owns and submits them with the
-        // ledger recompute, so a reinstall recovers the purchase as a fresh
-        // guest with no host wiring at the call site.
-        client.payments().setProofSource(billing::collectProofs);
         appendLog("payments bootstrap…");
         client.bootstrap().whenComplete((bootstrap, error) -> {
             if (error != null) {
@@ -280,64 +278,55 @@ public class MainActivity extends Activity {
 
         EditText productId = field(screen, firstPlayProduct(catalog));
 
-        // Connect the Play Billing client so a sandbox purchase works, then
-        // run the startup restore once Play is reachable — the proof source
-        // needs a live connection.
-        billing.connect(new PlayBillingHelper.StateListener() {
-            @Override
-            public void onReady() {
-                appendLog("play billing ready");
-                restorePurchases("startup restore");
-            }
-
-            @Override
-            public void onDisconnected(String message) {
-                appendLog("play billing unavailable: " + message);
+        // Resolve the shop with Play prices, then run the startup restore —
+        // the first load also connects the built-in billing client.
+        store.loadProducts().whenComplete((rows, error) -> {
+            if (error != null) {
+                appendLog("shop failed: " + rootMessage(error));
                 restorePurchases("startup restore (ledger only)");
+                return;
             }
+            for (Open4IDPlayBillingStore.PlayStoreProduct row : rows) {
+                appendLog("shop: " + row.product.productId + " [" + row.product.type
+                        + "] " + (row.isResolvable()
+                                ? row.formattedPrice : "(not in Play — Buy disabled)"));
+            }
+            restorePurchases("startup restore");
         });
 
         Button buyBtn = new Button(this);
         buyBtn.setText("Buy with Play Billing");
-        buyBtn.setOnClickListener(v -> billing.buy(text(productId),
-                isSubscriptionProduct(text(productId)),
-                new PlayBillingHelper.PurchaseListener() {
-                    @Override
-                    public void onPurchased(String boughtProductId, String token) {
-                        appendLog("play purchase ok: " + boughtProductId);
-                        verifyPlayProof(boughtProductId, token);
+        buyBtn.setOnClickListener(v -> store.purchase(text(productId))
+                .whenComplete((outcome, error) -> {
+                    if (error != null) {
+                        appendLog("purchase failed: " + rootMessage(error));
+                        return;
                     }
-
-                    @Override
-                    public void onCancelled() {
+                    if (outcome.isCancelled()) {
                         appendLog("play purchase cancelled");
+                        return;
                     }
-
-                    @Override
-                    public void onFailed(String message) {
-                        appendLog("play purchase failed: " + message);
+                    if (outcome.isPending()) {
+                        appendLog("play purchase pending (ask-to-buy): "
+                                + "a later restore picks it up");
+                        return;
                     }
+                    appendLog("play purchase ok: " + outcome.productId);
+                    if (outcome.receipt != null) {
+                        appendLog("consumable " + outcome.receipt.state + ": "
+                                + outcome.receipt.transactionRef + " x"
+                                + outcome.receipt.quantity
+                                + " (refunded " + outcome.receipt.refundedQuantity + ")");
+                        return;
+                    }
+                    appendLog("verify ok: " + outcome.entitlements.size()
+                            + " entitlement(s)");
                 }));
         screen.addView(buyBtn);
 
         Button restoreBtn = new Button(this);
         restoreBtn.setText("Restore purchases");
-        restoreBtn.setOnClickListener(v -> {
-            // A fresh Play query each time: a purchase made on another
-            // device is only visible to Play after a restore/query.
-            billing.connect(new PlayBillingHelper.StateListener() {
-                @Override
-                public void onReady() {
-                    restorePurchases("restore");
-                }
-
-                @Override
-                public void onDisconnected(String message) {
-                    appendLog("play billing unavailable: " + message);
-                    restorePurchases("restore (ledger only)");
-                }
-            });
-        });
+        restoreBtn.setOnClickListener(v -> restorePurchases("restore"));
         screen.addView(restoreBtn);
 
         // Webhook delivery is not implemented, so refunds are learned by
@@ -404,85 +393,16 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Submits a Play proof to the Open4ID payments surface. A consumable
-     * goes through the consumable delivery call: Open4ID consumes it
-     * server-side, so the example grants nothing and only consumes the
-     * token again as a harmless safety net. Every other product keeps the
-     * entitlement path and is acknowledged so it is not auto-refunded
-     * after three days.
-     */
-    private void verifyPlayProof(String productId, String token) {
-        if (productId == null || productId.isEmpty()
-                || token == null || token.isEmpty()) {
-            appendLog("verify: product id and purchase token are required");
-            return;
-        }
-        PaymentTypes.TransactionProof proof =
-                PaymentTypes.TransactionProof.googlePlay(productId, token);
-        if (isConsumableProduct(productId)) {
-            client.payments().verifyConsumable(proof)
-                    .whenComplete((receipt, error) -> {
-                        if (error != null) {
-                            appendLog("consumable verify failed: " + rootMessage(error));
-                            return;
-                        }
-                        appendLog("consumable " + receipt.state + ": "
-                                + receipt.transactionRef + " x" + receipt.quantity
-                                + " (refunded " + receipt.refundedQuantity + ")");
-                        if ((receipt.isDelivered() || receipt.isAlreadyDelivered())
-                                && billing != null) {
-                            // The server already consumed it; Play reports
-                            // "already consumed" and this is a no-op.
-                            billing.consume(token);
-                        }
-                    });
-            return;
-        }
-        client.payments().verifyTransaction(proof)
-                .whenComplete((rows, error) -> {
-                    if (error != null) {
-                        appendLog("verify failed: " + rootMessage(error));
-                        return;
-                    }
-                    appendLog("verify ok: " + rows.size() + " entitlement(s)");
-                    if (billing != null) {
-                        billing.acknowledge(token);
-                    }
-                });
-    }
-
-    /** Reads the bootstrap catalog to decide how a purchase is finished. */
-    private boolean isConsumableProduct(String productId) {
-        PaymentTypes.PaymentProduct product = client.payments().products().product(productId);
-        return product != null && product.isConsumable();
-    }
-
-    /** Catalog type decides whether Play is queried as INAPP or SUBS. */
-    private boolean isSubscriptionProduct(String productId) {
-        PaymentTypes.PaymentProduct product = client.payments().products().product(productId);
-        return product != null && "subscription".equals(product.type);
-    }
-
-    private java.util.Set<String> consumableProductIds() {
-        java.util.Set<String> ids = new java.util.HashSet<>();
-        for (PaymentTypes.PaymentProduct product
-                : client.payments().products().forPlatform("google_play")) {
-            if (product.isConsumable()) {
-                ids.add(product.productId);
-            }
-        }
-        return ids;
-    }
-
-    /**
      * Restores this player's purchases: the ledger recompute plus the store
-     * proofs the registered proof source collects from Play. A stored
-     * session keeps its player and re-submits its purchases; a reinstall
-     * starts as a guest and the proof moves an anonymous binding to it.
+     * proofs the built-in store collects from Play. A stored session keeps
+     * its player and re-submits its purchases; a reinstall starts as a
+     * guest and the proof moves an anonymous binding to it. The store
+     * finishes restored purchases (consume consumables, acknowledge the
+     * rest) only when the server accepted every proof.
      */
     private void restorePurchases(String label) {
         appendLog(label + ": restore…");
-        client.payments().restore()
+        store.restore()
                 .whenComplete((result, error) -> {
                     if (error != null) {
                         appendLog(label + " failed: " + rootMessage(error));
@@ -497,12 +417,6 @@ public class MainActivity extends Activity {
                     if (result.conflict > 0) {
                         appendLog(label + ": purchase owned by another account — "
                                 + "sign in as that account to recover it");
-                    }
-                    // Acknowledge only what the server accepted, so an
-                    // unverified purchase can still be auto-refunded.
-                    if (billing != null && result.verified > 0 && result.rejected == 0
-                            && result.conflict == 0) {
-                        billing.finishCollected(consumableProductIds());
                     }
                 });
     }
@@ -604,9 +518,9 @@ public class MainActivity extends Activity {
             paymentsUnsubscribe.run();
             paymentsUnsubscribe = null;
         }
-        if (billing != null) {
-            billing.end();
-            billing = null;
+        if (store != null) {
+            store.end();
+            store = null;
         }
         super.onDestroy();
     }
