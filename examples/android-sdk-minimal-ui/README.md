@@ -7,8 +7,10 @@ and delete-account come with the view; this activity only creates the
 headless client, bootstraps it, binds both to the view, and listens
 for sign-in/sign-out/account-deleted.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.4.1` from Maven
-Central, pinned in `app/build.gradle`).
+It needs the published SDK (`com.open4id:open4id-sdk:0.5.0` from Maven
+Central, pinned in `app/build.gradle`) plus the example-owned
+`com.android.billingclient:billing` dependency for the sandbox purchase
+sheet — the SDK itself has no store dependency.
 
 ## Prerequisites
 
@@ -41,6 +43,29 @@ modal): sign up (sends the 24h verification
 email), sign in, continue as guest, or request a password reset. The
 view remembers the session while the client lives; the auth listener
 logs sign-in/sign-out/deletion to logcat (`Open4ID` tag).
+
+## Payments (Play Billing)
+
+**Payments (Play Billing)** opens a self-contained payments screen with
+its own log panel — the same surface as `../android-sdk-minimal`
+(section "Payments (Play Billing)" there), pointed at the same client:
+
+- the catalog comes from the bootstrap snapshot (`payments().products()`),
+  filtered to `google_play` rows;
+- **Buy with Play Billing** opens the real Play sheet and forwards the
+  purchase token through `payments().verifyTransaction(...)` /
+  `payments().verifyConsumable(...)` (consumable rows get a
+  `transactionRef` receipt, not entitlements); one-time purchases are
+  acknowledged only after Core API accepts the proof;
+- **Restore purchases** and the screen-open restore call
+  `payments().restore()` through the proof source registered with
+  `payments().setProofSource(billing::collectProofs)` (Play
+  `queryPurchasesAsync` over `INAPP` + `SUBS`), so the same call
+  recovers purchases after a restart and after a reinstall (fresh
+  guest; the store proof moves the anonymous binding);
+- **List payment purchases** reads the player's ledger receipts
+  (`payments().purchases()`), and **Refresh entitlements** re-reads the
+  snapshot — entitlement changes re-render in the log panel.
 
 **Social sign-in:** GitHub and Apple work out of the SDK: pass the host
 `Activity` to the client (e.g. `new Open4IDAuthClient(this)` or

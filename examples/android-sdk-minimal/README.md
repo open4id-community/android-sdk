@@ -3,11 +3,13 @@
 The smallest possible published-SDK integration: one activity driving
 the headless `Open4IDAuthClient` directly — no login view, no social
 flows, no build tricks. It exercises bootstrap, email
-register/sign-in, guest sign-in, session refresh, and sign-out against
-the local dev Core API.
+register/sign-in, guest sign-in, session refresh, sign-out, and the
+payments surface against the local dev Core API.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.4.1` from Maven
-Central, pinned in `app/build.gradle`).
+It needs the published SDK (`com.open4id:open4id-sdk:0.5.0` from Maven
+Central, pinned in `app/build.gradle`) plus the example-owned
+`com.android.billingclient:billing` dependency for the sandbox purchase
+sheet — the SDK itself has no store dependency.
 
 ## Prerequisites
 
@@ -39,6 +41,40 @@ Click through: **1. Bootstrap** (public discovery, no secrets) →
 in** / **2c. Continue as guest** → **3. Refresh** (rotates only near
 expiry) → **4. Sign out** (revokes server-side, clears memory). SDK
 failures render as stable error keys (`client.*`, `system.*`).
+
+## Payments (Play Billing)
+
+**5. Payments (Play Billing)** opens a self-contained payments screen
+that mirrors `sdks/android/sample`:
+
+- The catalog comes from the bootstrap snapshot (`payments().products()`),
+  filtered to `google_play` rows — the product ids must exist in the
+  Play Console for the package.
+- **Buy with Play Billing** opens the real Play sheet (a license-tester
+  account buys with a test instrument), then forwards the purchase
+  token through `payments().verifyTransaction(...)` — or
+  `payments().verifyConsumable(...)` for a catalog `consumable` row,
+  which returns a `transactionRef` receipt instead of entitlements.
+  One-time purchases are acknowledged only after Core API accepts the
+  proof (otherwise Play auto-refunds after three days); consumables are
+  consumed.
+- **Restore purchases** and the screen-open restore both call
+  `payments().restore()` through the proof source registered with
+  `payments().setProofSource(billing::collectProofs)` — Play's
+  `queryPurchasesAsync` over `INAPP` + `SUBS`. That makes the same call
+  recover purchases after a restart (stored session) and after a
+  reinstall (fresh guest; the store proof moves the anonymous binding).
+  Restored purchases are acknowledged only after the server accepted
+  every proof.
+- **List payment purchases** reads the player's ledger receipts
+  (`payments().purchases()`) — how a game learns about consumable
+  deliveries and refunds while webhook delivery is not implemented.
+- **Refresh entitlements** re-reads the entitlement snapshot;
+  entitlement changes from any source re-render the bottom panel.
+
+The screen's log lines are the same ones the live smoke runbook
+(`docs/tasks/PAYMENT_LIVE_SMOKE_RUNBOOK.md`) asserts, so this example
+doubles as a manual payment harness.
 
 ## Notes
 

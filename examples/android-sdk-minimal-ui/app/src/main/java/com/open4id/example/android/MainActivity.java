@@ -9,6 +9,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.TextView;
 
 import com.open4id.sdk.AuthTypes;
 import com.open4id.sdk.ui.Open4IDAuthView;
@@ -38,6 +39,15 @@ public class MainActivity extends Activity {
     private EditText redirectUri;
     private android.view.View mainView;
     private boolean showingLoginUi = false;
+    // Payments screen state (see openPayments).
+    private boolean showingPayments = false;
+    /** Detaches the payment screen's entitlement listener on exit. */
+    private Runnable paymentsUnsubscribe;
+    // Example-owned real Play Billing client for sandbox purchases; the
+    // SDK has no store dependency and never opens a purchase sheet.
+    private PlayBillingHelper billing;
+    /** Log surface of the open payments screen (null when closed). */
+    private TextView paymentsLog;
     // API 33+ routes system Back through the invoked-dispatcher (the
     // onBackPressed override below only runs on older releases).
     private android.window.OnBackInvokedCallback backInvokedCallback;
@@ -75,6 +85,13 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        Button paymentsBtn = new Button(this);
+        paymentsBtn.setText("Payments (Play Billing)");
+        paymentsBtn.setOnClickListener(v -> openPayments());
+        root.addView(paymentsBtn,
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+
         ScrollView outer = new ScrollView(this);
         outer.addView(root);
         mainView = outer;
@@ -84,7 +101,9 @@ public class MainActivity extends Activity {
         outer.setFitsSystemWindows(true);
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             backInvokedCallback = () -> {
-                if (showingLoginUi) {
+                if (showingPayments) {
+                    leavePayments();
+                } else if (showingLoginUi) {
                     showingLoginUi = false;
                     setContentView(mainView);
                 } else {
@@ -135,6 +154,14 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         if (authStateListener != null) {
             authStateListener.run();
+        }
+        if (paymentsUnsubscribe != null) {
+            paymentsUnsubscribe.run();
+            paymentsUnsubscribe = null;
+        }
+        if (billing != null) {
+            billing.end();
+            billing = null;
         }
         if (backInvokedCallback != null
                 && android.os.Build.VERSION.SDK_INT >= 33) {
@@ -193,6 +220,359 @@ public class MainActivity extends Activity {
             }
             runOnUiThread(() -> showLoginDialog(bootstrap));
         });
+    }
+
+    /**
+     * Payments screen: the headless payment surface behind a real
+     * example-owned Play Billing client (billing 9.x). The SDK has no store
+     * dependency: Play produces the purchase token, the SDK verifies it
+     * server-side through Core API. Opening the screen and the "Restore
+     * purchases" button both call {@code payments().restore()}, which uses
+     * the proof source registered below — so the same call recovers a
+     * purchase after a restart and after a reinstall.
+     */
+    private void openPayments() {
+        try {
+            client.configure(text(appId), text(environment), text(publicKey),
+                    text(endpoint), text(redirectUri), null,
+                    getPackageName());
+        } catch (RuntimeException e) {
+            appendLog("configure: " + e.getMessage());
+            return;
+        }
+        if (billing == null) {
+            billing = new PlayBillingHelper(this, this::appendLog);
+        }
+        // One registration makes restore() self-sufficient: it asks Play
+        // which purchases this store account owns and submits them with the
+        // ledger recompute, so a reinstall recovers the purchase as a fresh
+        // guest with no host wiring at the call site.
+        client.payments().setProofSource(billing::collectProofs);
+        appendLog("payments bootstrap…");
+        client.bootstrap().whenComplete((bootstrap, error) -> {
+            if (error != null) {
+                appendLog("payments bootstrap failed: " + rootMessage(error));
+                return;
+            }
+            runOnUiThread(this::showPayments);
+        });
+    }
+
+    private void showPayments() {
+        int pad = (int) (16 * getResources().getDisplayMetrics().density);
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.setPadding(pad, pad, pad, pad);
+
+        com.open4id.sdk.PaymentTypes.PaymentCatalog catalog = client.payments().products();
+        TextView catalogView = new TextView(this);
+        catalogView.setTextSize(13);
+        catalogView.setText(describeCatalog(catalog));
+        screen.addView(catalogView);
+
+        EditText productId = field(screen, firstPlayProduct(catalog));
+
+        // Connect the Play Billing client so a sandbox purchase works, then
+        // run the startup restore once Play is reachable — the proof source
+        // needs a live connection.
+        billing.connect(new PlayBillingHelper.StateListener() {
+            @Override
+            public void onReady() {
+                appendLog("play billing ready");
+                restorePurchases("startup restore");
+            }
+
+            @Override
+            public void onDisconnected(String message) {
+                appendLog("play billing unavailable: " + message);
+                restorePurchases("startup restore (ledger only)");
+            }
+        });
+
+        Button buyBtn = new Button(this);
+        buyBtn.setText("Buy with Play Billing");
+        buyBtn.setOnClickListener(v -> billing.buy(text(productId),
+                isSubscriptionProduct(text(productId)),
+                new PlayBillingHelper.PurchaseListener() {
+                    @Override
+                    public void onPurchased(String boughtProductId, String token) {
+                        appendLog("play purchase ok: " + boughtProductId);
+                        verifyPlayProof(boughtProductId, token);
+                    }
+
+                    @Override
+                    public void onCancelled() {
+                        appendLog("play purchase cancelled");
+                    }
+
+                    @Override
+                    public void onFailed(String message) {
+                        appendLog("play purchase failed: " + message);
+                    }
+                }));
+        screen.addView(buyBtn);
+
+        Button restoreBtn = new Button(this);
+        restoreBtn.setText("Restore purchases");
+        restoreBtn.setOnClickListener(v ->
+                billing.connect(new PlayBillingHelper.StateListener() {
+                    @Override
+                    public void onReady() {
+                        restorePurchases("restore");
+                    }
+
+                    @Override
+                    public void onDisconnected(String message) {
+                        appendLog("play billing unavailable: " + message);
+                        restorePurchases("restore (ledger only)");
+                    }
+                }));
+        screen.addView(restoreBtn);
+
+        // Webhook delivery is not implemented, so refunds are learned by
+        // reading the player's ledger receipts. A game grants items keyed
+        // by transactionRef and reverses refundedQuantity; the example only
+        // logs them because it owns no item balance.
+        Button purchasesBtn = new Button(this);
+        purchasesBtn.setText("List payment purchases");
+        purchasesBtn.setOnClickListener(v -> client.payments().purchases()
+                .whenComplete((rows, error) -> {
+                    if (error != null) {
+                        appendLog("purchases failed: " + rootMessage(error));
+                        return;
+                    }
+                    appendLog("purchases ok: " + rows.size() + " receipt(s)");
+                    for (com.open4id.sdk.PaymentTypes.PaymentPurchase purchase : rows) {
+                        appendLog("  " + purchase.transactionRef + " "
+                                + purchase.productId + " [" + purchase.type + "] "
+                                + purchase.status + " x" + purchase.quantity
+                                + (purchase.refundedQuantity > 0
+                                        ? " (refunded " + purchase.refundedQuantity + ")"
+                                        : ""));
+                    }
+                }));
+        screen.addView(purchasesBtn);
+
+        Button refreshBtn = new Button(this);
+        refreshBtn.setText("Refresh entitlements");
+        refreshBtn.setOnClickListener(v -> client.entitlements().refresh()
+                .whenComplete((snapshot, error) -> {
+                    if (error != null) {
+                        appendLog("entitlements failed: " + rootMessage(error));
+                        return;
+                    }
+                    appendLog(describeEntitlements(snapshot));
+                }));
+        screen.addView(refreshBtn);
+
+        TextView logView = new TextView(this);
+        logView.setTextSize(13);
+        logView.setTextIsSelectable(true);
+        paymentsLog = logView;
+        ScrollView logScroll = new ScrollView(this);
+        logScroll.addView(logView);
+        screen.addView(logScroll,
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        0, 1f));
+
+        // Entitlement changes from any source re-render the snapshot.
+        paymentsUnsubscribe = client.entitlements().onChanged(
+                snapshot -> runOnUiThread(() ->
+                        logView.append(describeEntitlements(snapshot) + "\n")));
+
+        Button back = new Button(this);
+        back.setText("Back");
+        back.setOnClickListener(v -> leavePayments());
+        screen.addView(back,
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        showingPayments = true;
+        // Same edge-to-edge guard as the login screen above.
+        screen.setFitsSystemWindows(true);
+        setContentView(screen);
+    }
+
+    /**
+     * Submits a Play proof to the Open4ID payments surface. A consumable
+     * goes through the consumable delivery call: Open4ID consumes it
+     * server-side, so the example grants nothing and only consumes the
+     * token again as a harmless safety net. Every other product keeps the
+     * entitlement path and is acknowledged so it is not auto-refunded
+     * after three days.
+     */
+    private void verifyPlayProof(String productId, String token) {
+        if (productId == null || productId.isEmpty()
+                || token == null || token.isEmpty()) {
+            appendLog("verify: product id and purchase token are required");
+            return;
+        }
+        com.open4id.sdk.PaymentTypes.TransactionProof proof =
+                com.open4id.sdk.PaymentTypes.TransactionProof.googlePlay(productId, token);
+        if (isConsumableProduct(productId)) {
+            client.payments().verifyConsumable(proof)
+                    .whenComplete((receipt, error) -> {
+                        if (error != null) {
+                            appendLog("consumable verify failed: " + rootMessage(error));
+                            return;
+                        }
+                        appendLog("consumable " + receipt.state + ": "
+                                + receipt.transactionRef + " x" + receipt.quantity
+                                + " (refunded " + receipt.refundedQuantity + ")");
+                        if ((receipt.isDelivered() || receipt.isAlreadyDelivered())
+                                && billing != null) {
+                            // The server already consumed it; Play reports
+                            // "already consumed" and this is a no-op.
+                            billing.consume(token);
+                        }
+                    });
+            return;
+        }
+        client.payments().verifyTransaction(proof)
+                .whenComplete((rows, error) -> {
+                    if (error != null) {
+                        appendLog("verify failed: " + rootMessage(error));
+                        return;
+                    }
+                    appendLog("verify ok: " + rows.size() + " entitlement(s)");
+                    if (billing != null) {
+                        billing.acknowledge(token);
+                    }
+                });
+    }
+
+    /** Reads the bootstrap catalog to decide how a purchase is finished. */
+    private boolean isConsumableProduct(String productId) {
+        com.open4id.sdk.PaymentTypes.PaymentProduct product =
+                client.payments().products().product(productId);
+        return product != null && product.isConsumable();
+    }
+
+    /** Catalog type decides whether Play is queried as INAPP or SUBS. */
+    private boolean isSubscriptionProduct(String productId) {
+        com.open4id.sdk.PaymentTypes.PaymentProduct product =
+                client.payments().products().product(productId);
+        return product != null && "subscription".equals(product.type);
+    }
+
+    private java.util.Set<String> consumableProductIds() {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (com.open4id.sdk.PaymentTypes.PaymentProduct product
+                : client.payments().products().forPlatform("google_play")) {
+            if (product.isConsumable()) {
+                ids.add(product.productId);
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * Restores this player's purchases: the ledger recompute plus the store
+     * proofs the registered proof source collects from Play. A stored
+     * session keeps its player and re-submits its purchases; a reinstall
+     * starts as a guest and the proof moves an anonymous binding to it.
+     */
+    private void restorePurchases(String label) {
+        appendLog(label + ": restore…");
+        client.payments().restore()
+                .whenComplete((result, error) -> {
+                    if (error != null) {
+                        appendLog(label + " failed: " + rootMessage(error));
+                        return;
+                    }
+                    appendLog(label + " ok: " + result.entitlements.size()
+                            + " entitlement(s), verified=" + result.verified
+                            + " rejected=" + result.rejected
+                            + " conflict=" + result.conflict
+                            + (result.proofsUnavailable
+                                    ? ", store proofs unavailable" : ""));
+                    if (result.conflict > 0) {
+                        appendLog(label + ": purchase owned by another account — "
+                                + "sign in as that account to recover it");
+                    }
+                    // Acknowledge only what the server accepted, so an
+                    // unverified purchase can still be auto-refunded.
+                    if (billing != null && result.verified > 0 && result.rejected == 0
+                            && result.conflict == 0) {
+                        billing.finishCollected(consumableProductIds());
+                    }
+                });
+    }
+
+    private void leavePayments() {
+        showingPayments = false;
+        if (paymentsUnsubscribe != null) {
+            paymentsUnsubscribe.run();
+            paymentsUnsubscribe = null;
+        }
+        paymentsLog = null;
+        setContentView(mainView);
+    }
+
+    private static String firstPlayProduct(
+            com.open4id.sdk.PaymentTypes.PaymentCatalog catalog) {
+        for (com.open4id.sdk.PaymentTypes.PaymentProduct product
+                : catalog.forPlatform("google_play")) {
+            return product.productId;
+        }
+        return "sku_premium";
+    }
+
+    private static String describeCatalog(
+            com.open4id.sdk.PaymentTypes.PaymentCatalog catalog) {
+        if (!catalog.enabled) {
+            return "payments: disabled (no store enabled or no catalog)";
+        }
+        StringBuilder out = new StringBuilder("payments: enabled, ")
+                .append(catalog.products.size()).append(" product(s)\n");
+        for (com.open4id.sdk.PaymentTypes.PaymentProduct product
+                : catalog.forPlatform("google_play")) {
+            out.append("  ").append(product.productId)
+                    .append(" [").append(product.type).append("] -> ")
+                    .append(product.isConsumable()
+                            ? "(consumable, no entitlement)" : product.entitlements)
+                    .append('\n');
+        }
+        return out.toString();
+    }
+
+    private static String describeEntitlements(
+            com.open4id.sdk.PaymentTypes.EntitlementSnapshot snapshot) {
+        if (snapshot == null) {
+            return "entitlements: none fetched yet (sign in, then buy or restore)";
+        }
+        StringBuilder out = new StringBuilder("entitlements fetchedAt=")
+                .append(snapshot.fetchedAtMillis).append('\n');
+        for (com.open4id.sdk.PaymentTypes.Entitlement entitlement
+                : snapshot.entitlements) {
+            out.append("  ").append(entitlement.key)
+                    .append(" = ").append(entitlement.state)
+                    .append(" via ").append(entitlement.source);
+            if (entitlement.expiresAt != null) {
+                out.append(" until ").append(entitlement.expiresAt);
+            }
+            out.append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * Log lines from the payments screen go into its own log view; the
+     * Toast surface stays for the login screens.
+     */
+    private void appendLog(String line) {
+        TextView target = paymentsLog;
+        if (target != null) {
+            runOnUiThread(() -> target.append(line + "\n"));
+            return;
+        }
+        runOnUiThread(() -> android.widget.Toast.makeText(MainActivity.this,
+                line, android.widget.Toast.LENGTH_LONG).show());
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable cause = error.getCause() != null ? error.getCause() : error;
+        return String.valueOf(cause.getMessage());
     }
 
     private void showLoginDialog(AuthTypes.Bootstrap bootstrap) {
@@ -270,6 +650,10 @@ public class MainActivity extends Activity {
     @SuppressWarnings("deprecation")
     @Override
     public void onBackPressed() {
+        if (showingPayments) {
+            leavePayments();
+            return;
+        }
         if (showingLoginUi) {
             showingLoginUi = false;
             setContentView(mainView);
