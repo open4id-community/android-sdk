@@ -25,7 +25,7 @@ Published to Maven Central as `com.open4id:open4id-sdk` ([changelog](CHANGELOG.m
 
 ```gradle
 dependencies {
-    implementation 'com.open4id:open4id-sdk:0.3.2'
+    implementation 'com.open4id:open4id-sdk:0.5.0'
 }
 ```
 
@@ -67,18 +67,27 @@ GitHub / Apple) — copy them character for character:
   SHA-1 (debug key:
   `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey`)
   to that Web client ID in the same project.
-- **GitHub**: provider enabled; register the derived callback URI
-  (`deriveGitHubCallbackUri`, default `<redirectUri origin>/github-callback`)
-  in the GitHub OAuth App settings. Native apps call back through the
-  Portal first: register one per-app bridge URL,
+- **GitHub**: provider enabled; register the shared Portal callback URL
+  (`https://app.open4id.com/github-callback` — the JS SDK's derived
+  default, shown in the Portal preview) in the GitHub OAuth App settings.
+  Native apps call back through
+  the Portal too: register one per-app bridge URL,
   `https://app.open4id.com/github-callback/<package_name>`, and pass it
   as the callback URI.
-- **Apple**: provider enabled; register the derived Return URL
-  (`deriveAppleReturnUri`, default the redirect-URI origin) in the
+- **Apple**: provider enabled; register the Return URLs derived from every
+  exact OAuth redirect URI (their origins — Apple's web popup answers to
+  the page's own origin, HTTPS only) in the
   Services ID settings. Native apps call back through the Portal first:
   register one per-app bridge URL,
   `https://app.open4id.com/apple-callback/<package_name>`, and pass it
   as the Return URL.
+- **Facebook**: provider enabled; register the shared Portal callback URL
+  (`https://app.open4id.com/facebook-callback` — the JS SDK's derived
+  default, shown in the Portal preview) in the Facebook app's Valid OAuth
+  Redirect URIs. Native apps call back through the Portal too: register
+  one per-app bridge URL,
+  `https://app.open4id.com/facebook-callback/<package_name>`, and pass it
+  as the callback URI.
 
 ### Step 1 — Depend on the SDK
 
@@ -106,7 +115,7 @@ client.configure(
 // Off the main thread:
 AuthTypes.Bootstrap bootstrap = client.bootstrap().get();
 // bootstrap.auth.* — OIDC endpoints, scopes
-// bootstrap.login.* — provider readiness (google.clientId, github.clientId, apple.clientId)
+// bootstrap.login.* — provider readiness (google.clientId, github.clientId, facebook.clientId, apple.clientId)
 // bootstrap.serverCallback — publisher login receipt callback (opt-in)
 ```
 
@@ -129,8 +138,8 @@ login.addAuthListener(new Open4IDAuthView.AuthListener() {
 setContentView(login);
 ```
 
-Email/password, sign-up, guest, Google, GitHub, and Apple all render
-inside — no provider code on your side. Google needs the view hosted
+Email/password, sign-up, guest, Google, GitHub, Facebook, and Apple all
+render inside — no provider code on your side. Google needs the view hosted
 in an `Activity` (account chooser / consent UI).
 
 ### Step 4 — Use the session
@@ -179,11 +188,11 @@ in-memory successful snapshot. `configure()` resets all session state
 
 `Open4IDAuthView` renders sign-in, sign-up, forgot-password, link-email, and
 delete-account modes from safe bootstrap readiness. Provider buttons
-carry the inline brand marks (Google, GitHub, Apple vector drawables —
-no host assets needed). The view shows only the login methods the
-Publisher enabled for the environment (normal email/password, guest,
-Google, GitHub, Apple) — toggled in the Publisher Portal under App
-Settings → SDK & API keys → Login methods — and hides the rest
+carry the inline brand marks (Google, GitHub, Facebook, Apple vector
+drawables — no host assets needed). The view shows only the login
+methods the Publisher enabled for the environment (normal email/password,
+guest, Google, GitHub, Facebook, Apple) — toggled in the Publisher Portal
+under App Settings → SDK & API keys → Login methods — and hides the rest
 automatically after the next bootstrap. Every protocol operation runs in the bound
 headless client: credentials and tokens never leave the view except
 through that client.
@@ -227,7 +236,8 @@ login.setAppName("My Game");            // default: bootstrap displayName
 
 Social bridge URLs need no per-app hardcoding: with a custom-scheme
 redirect the SDK defaults to the per-app Portal bridges
-(`<portalOrigin>/github-callback/<package>` and
+(`<portalOrigin>/github-callback/<package>`,
+`<portalOrigin>/facebook-callback/<package>`, and
 `<portalOrigin>/apple-callback/<package>`), which must be registered at
 each provider console. The Portal origin defaults to production
 (`https://app.open4id.com`); development builds point it at the local
@@ -237,6 +247,7 @@ Portal instead:
 // Explicit per-call/per-view overrides still win when you host your own
 // callback pages (e.g. an http(s) redirect keeps its origin-derived default):
 login.setGitHubCallbackUri("https://game.example.com/github-callback");
+login.setFacebookCallbackUri("https://game.example.com/facebook-callback");
 login.setAppleReturnUri("https://game.example.com/apple-return");
 ```
 
@@ -252,8 +263,10 @@ addresses and non-guest sessions get inline guidance instead of raw
 errors. The Google button signs in through `signInWithGoogle` (Play
 Services server auth code, no navigation — needs the view hosted in an
 `Activity`); the GitHub button signs in through `signInWithGitHub`
-(Custom Tab plus the game/SaaS callback page); the Apple button signs
-in through `signInWithApple` (Custom Tab, no navigation). Unavailable
+(Custom Tab plus the game/SaaS callback page); the Facebook button signs
+in through `signInWithFacebook` (Custom Tab at the Facebook OAuth dialog,
+same Portal-bridge shape); the Apple button signs in through
+`signInWithApple` (Custom Tab, no navigation). Unavailable
 providers and user cancellations render as info lines; anything else
 renders the mapped error. The component never parses, validates,
 stores, or exposes player tokens.
@@ -365,18 +378,23 @@ or a provider error throws `client.auth.invalid_state` /
 
 ### Social providers
 
-Google works out of the box; GitHub and Apple need the host UI seam
-(see below).
+Google needs a host-side seam (see below); GitHub, Facebook, and Apple
+are implemented by the base SDK — no host subclass needed.
 
 ```java
 // Google (Play Services server auth code — not a Credential Manager ID token)
+// Needs play-services-auth in the host app + a host SocialAuthClient that
+// overrides getGoogleAuthorizationCode with GoogleSignInClient.
 AuthTypes.AuthSession session = client.signInWithGoogle(activity).get();
 
-// GitHub (Custom Tab opened by the host seam; null resolves to the
-// per-app Portal bridge derived from the portal origin + package name)
+// GitHub (Custom Tab opened by the SDK; set the host Activity first)
+client.setHostActivity(activity); // or new Open4IDAuthClient(activity)
 AuthTypes.AuthSession github = client.signInWithGitHub(null).get();
 
-// Apple (Custom Tab opened by the host seam; same Portal-first shape)
+// Facebook (Custom Tab at the Facebook OAuth dialog; same Portal-first shape)
+AuthTypes.AuthSession facebook = client.signInWithFacebook(null).get();
+
+// Apple (Custom Tab opened by the SDK; same Portal-first shape)
 AuthTypes.AuthSession apple = client.signInWithApple(null).get();
 ```
 
@@ -397,20 +415,35 @@ throws `client.auth.provider_unavailable`. A host without
 `play-services-auth` gets `client.auth.provider_unavailable`, never a
 linkage error.
 
-GitHub and Apple have no platform API (and WebView is forbidden for
-auth), so the base SDK leaves the browser seam to the host: subclass
-and override `openGitHubCustomTab` / `openAppleCustomTab` (open the
-provider URL in a Custom Tab, await your deep link, return the code —
-the `sample/` app's `SocialAuthClient` is the reference implementation).
-The provider readiness gate (`client.auth.provider_unavailable`), the
-closed/denied mapping (`popup_closed` / `access_denied`), and the
-120s user-interaction budget mirror the Google flow.
+GitHub, Facebook, and Apple open a Custom Tab in the host `Activity` and
+await the `?code&state` deep link fired back by the Portal bridge. Set
+the host `Activity` before signing in — `new Open4IDAuthClient(activity)`
+or `setHostActivity(activity)` — then forward the deep-link intent URL to
+`Open4IDAuthClient.completeDeepLink(uri)` from `Activity.onNewIntent`
+(return `true` when it was a social callback). Without a host Activity,
+all three flows throw `client.auth.popup_blocked`. The provider readiness
+gate (`client.auth.provider_unavailable`), the closed/denied mapping
+(`popup_closed` / `access_denied`), and the 120s user-interaction budget
+mirror the Google flow. Facebook signs in at the Facebook OAuth dialog
+(pinned Graph API version, `scope=email`, the same permission set as the
+JS popup flow) and posts the short-lived code plus the exact callback URI
+to `POST /client/player_facebook_authorize`, which the server exchanges
+with the Vault-backed App Secret.
+
+The interactive Google picker (`GoogleSignInClient.getSignInIntent()`) is
+left to the host because it requires `com.google.android.gms` — see
+`sdks/android/sample/.../SocialAuthClient.java` for the reference
+override, or the `android-sdk-minimal-ui` sample's `SocialAuthClient`.
 
 Derive the exact URIs to register at each provider console:
 
 ```java
 // GitHub OAuth App callback URI (default: redirectUri origin + /github-callback)
 String githubCallback = Open4IDAuthClient.deriveGitHubCallbackUri(
+        "com.example.game://open4id/callback", null);
+
+// Facebook Valid OAuth Redirect URI (default: redirectUri origin + /facebook-callback)
+String facebookCallback = Open4IDAuthClient.deriveFacebookCallbackUri(
         "com.example.game://open4id/callback", null);
 
 // Apple Services ID Return URL (default: redirectUri origin)
@@ -508,6 +541,174 @@ client.onServerCallbackError(error -> {
 });
 ```
 
+## Payments and entitlements (headless)
+
+The SDK does not sell anything: it has no purchase sheet and no store
+dependency. The game buys through Unity IAP or the native
+Play Billing client, then forwards the Play purchase token here. Core API
+re-verifies the token with Google before granting an entitlement, so the
+client claim is only a hint. Only `google_play` proofs are submitted from
+Android; the iOS SDK owns `app_store`.
+
+```java
+// Catalog comes from the bootstrap snapshot (no network call).
+PaymentTypes.PaymentCatalog catalog = client.payments().products();
+if (catalog.enabled) {
+    for (PaymentTypes.PaymentProduct product
+            : catalog.forPlatform("google_play")) {
+        // product.productId / product.type / product.entitlements
+    }
+}
+
+// After a successful Play Billing purchase, forward its purchase token.
+PaymentTypes.TransactionProof proof = PaymentTypes.TransactionProof
+        .googlePlay("sku_premium", purchaseTokenFromBillingClient);
+client.payments().verifyTransaction(proof).whenComplete((rows, error) -> {
+    if (error != null) { /* typed error, see below */ return; }
+    // rows: the player's recomputed entitlements
+});
+
+// Restore/recompute from the server ledger. Proofs are optional and
+// additive; an invalid proof counts as `rejected`, a proof owned by an
+// anonymous player transfers the purchase to this one, and a proof owned
+// by a credentialed account counts as `conflict`.
+client.payments().restore().whenComplete((result, error) -> {
+    // result.entitlements, result.verified, result.rejected, result.conflict
+    // result.hasConflict(), result.proofsUnavailable
+});
+
+// Optional but recommended: one registration makes restore() self-sufficient
+// at app start and behind "Restore purchases". The source is the billing
+// client the host already owns — the SDK stays free of store dependencies.
+client.payments().setProofSource(() -> {
+    List<PaymentTypes.TransactionProof> proofs = new ArrayList<>();
+    // PlayBillingClient.queryPurchasesAsync(INAPP + SUBS): one proof per
+    // owned purchase, e.g. TransactionProof.googlePlay(productId, token)
+    return CompletableFuture.completedFuture(proofs);
+});
+
+// Cheap checks against the cached snapshot.
+client.entitlements().refresh().whenComplete((snapshot, error) -> { });
+boolean premium = client.entitlements().has("premium"); // active or grace
+List<PaymentTypes.Entitlement> all = client.entitlements().list();
+client.entitlements().onChanged(snapshot -> { /* verify, restore, refresh,
+                                                 sign-in, sign-out */ });
+```
+
+### Google Play consumables
+
+A `consumable` catalog entry is Play-only and grants no entitlement: Open4ID
+does not own item balances. The game grants items itself from the receipt
+returned by `verifyConsumable`, keyed by a stable `transaction_ref`.
+
+```java
+client.payments().verifyConsumable(
+        PaymentTypes.TransactionProof.googlePlay("coins_100", purchaseToken))
+    .whenComplete((receipt, error) -> {
+        if (error != null) { /* 160003 is transient: retry later */ return; }
+        switch (receipt.state) {
+            case PaymentTypes.ConsumableReceipt.DELIVERED:
+                // Grant receipt.quantity items for receipt.transactionRef
+                // (idempotent by that reference).
+                break;
+            case PaymentTypes.ConsumableReceipt.ALREADY_DELIVERED:
+                break; // replay: the items were already granted
+            case PaymentTypes.ConsumableReceipt.PENDING:
+                break; // consume handshake unfinished: retry verify, grant nothing
+            case PaymentTypes.ConsumableReceipt.REFUNDED:
+                // The whole purchase was reversed: claw back this reference.
+                break;
+        }
+    });
+
+// Reconciliation read: webhook delivery is not implemented, so this is how
+// the game learns about refunds, including partial ones.
+client.payments().purchases().whenComplete((rows, error) -> {
+    for (PaymentTypes.PaymentPurchase purchase : rows) {
+        // Grant purchase.quantity for purchase.transactionRef, then reverse
+        // purchase.refundedQuantity. Both steps are idempotent per reference.
+    }
+});
+```
+
+`verifyConsumable` re-verifies the purchase with Google, writes the ledger
+row, then consumes the Play purchase server-side. Consuming both acknowledges
+the purchase (so it is not auto-refunded after three days) and makes the
+product buyable again. The host may call
+`BillingClient.consumeAsync(...)` again as a harmless no-op; Play answers
+"already consumed". Never acknowledge a consumable instead of consuming it.
+
+Rules and shapes:
+
+- **Proofs**: `TransactionProof.googlePlay(productId, purchaseToken)`.
+  Purchase tokens are sent once, never logged, and never persisted;
+  `toString()` redacts them.
+- **States**: `active` and `grace` are usable; `expired` and `revoked`
+  stay in `list()` so the host can show history. `expires_at` is absent
+  for non-expiring one-time grants.
+- **Snapshot lifecycle**: the cached snapshot is cleared when the
+  signed-in player changes or signs out, so grants never leak across
+  sessions. Same-session transitions keep it. `current()` is `null` on a
+  cold start until the first read, so treat "no snapshot" as unknown, not
+  as "not purchased".
+- **Restore bounds**: at most 20 proofs per call; the request body is
+  capped at 64 KB server-side.
+- **Catalog fail-closed**: before bootstrap, when the application has no
+  store enabled, or when the block is missing/malformed,
+  `products().enabled` is `false` with an empty list. A consumable is
+  Play-only and must have an empty `entitlements` list; `isConsumable()`
+  identifies it.
+- **Consumable receipts**: `transactionRef` (`ptx_...`) is stable for the
+  purchase and is never the store token, so it is safe to persist as the
+  game's grant/idempotency key. `quantity` and `refundedQuantity` follow the
+  ledger, `consumedAt` is set once Play accepts the consume, and
+  `consumeState` is `pending`, `consumed`, or `failed` in `purchases()`.
+  Consumables never appear in `entitlements()`, and neither
+  `verifyConsumable` nor a `verifyTransaction` response carrying a `delivery`
+  block publishes an entitlement snapshot.
+- **Restore records, it does not deliver**: `restore()` verifies and records a
+  consumable proof (so it counts as `verified`) but returns no receipt and does
+  not consume it server-side. Finish collected consumables with the Play client
+  after a successful restore (the sample consumes every collected consumable),
+  or call `verifyConsumable` for the receipt, and grant only from
+  `purchases()` keyed by `transactionRef`.
+- **Refunds**: `purchases()` is newest first and leaves out the store token
+  and player id. A `partially_refunded` row keeps `status`
+  `partially_refunded` until the whole quantity is reversed, then becomes
+  `refunded`; reverse only the delta between `refundedQuantity` and what the
+  game already clawed back.
+- **Retries**: `160003` (`client.payment.store_unavailable`) is
+  transient — retry later. `140006`
+  (`client.payment.owned_by_another_account`) means the purchase is bound to
+  another account: ask the player to sign in as that account, do not retry.
+- **Guest purchases and store-account restore**: `verifyTransaction` and
+  `restore` sign in as a guest first when there is no session and the
+  bootstrap snapshot allows guest login; with guest login disabled they fail
+  with `client.auth.not_authenticated`. A store-verified proof moves the
+  purchase only while the current owner is still an anonymous guest, so a
+  reinstall or a fresh guest recovers what it paid for. Once an owner has an
+  email or social identity the purchase is sticky: verify fails with
+  `SdkConflictError` and restore reports `result.conflict`, so a shared Play
+  account can never take a grant away from the paying account.
+- **App lifecycle and restore**: the device stores the session, never the
+  grants. At app start, `client.payments().restore()` recomputes the ledger
+  for the restored session and re-submits its store proofs (idempotent); after
+  a reinstall or sign-out it signs in as a guest and the proof moves an
+  anonymous binding to the new player. Register
+  `client.payments().setProofSource(...)` once with the billing client you
+  already own (Play `queryPurchasesAsync` over `INAPP` and `SUBS`) and the one
+  call covers both cases; without a source, restore stays a ledger-only
+  recompute. `result.proofsUnavailable` is `true` when the store could not be
+  read (error, throw, or the 10 s bound), so the UI can offer a retry instead
+  of hiding a paid feature. Use `entitlements().refresh()` when only the
+  ledger matters, and explicit `restore(proofs)` when the host collects
+  proofs itself — neither consults the source.
+- **Token freshness**: `verifyTransaction`, `restore`, and
+  `entitlements().refresh()` rotate a stale access token through
+  `ensureSession` before the call, so a session older than the 900 s token
+  lifetime (a store sheet left open, an idle game) still works instead of
+  answering `auth.token.invalid`.
+
 ## Error Keys
 
 All errors use stable `client.auth.*` / `system.*` keys (shared with the JS SDK);
@@ -537,6 +738,10 @@ need checked-exception plumbing:
 | `client.player.link_unavailable` | 409 | Guest linking not allowed |
 | `client.auth.server_callback_disabled` | 400 | Publisher checkbox off |
 | `client.auth.server_callback_failed` | 5xx | Receipt delivery failed |
+| `client.payment.invalid_request` | 400 | Malformed or missing store proof |
+| `client.payment.transaction_not_found` | 404 | Unknown transaction or entitlement (`130004`) |
+| `client.payment.owned_by_another_account` | 409 | Purchase bound to another credentialed account (`140006`); restore reports it as `conflict` instead |
+| `client.payment.store_unavailable` | 503 | Store verification temporarily unavailable (`160003`) |
 | `system.service.down` | 503 | Dependency unreachable |
 | `system.internal_error` | 500 | Unexpected failure |
 
@@ -549,7 +754,7 @@ system `gradle`):
 gradle :open4id-sdk:testDebugUnitTest
 ```
 
-- 84 JVM unit tests covering validation, error mapping, PKCE, flows, callback URI derivation, and the login-view strings/layout/brand/error mapping (2 live-gated tests skipped without device credentials)
+- 123 JVM unit tests covering validation, error mapping, PKCE, flows, callback URI derivation, payments (catalog including consumables, proof wire shape, consumable receipts and ledger purchases, restore bounds/conflict counts, the registered proof source for stored-session and reinstall restores, guest auto sign-in, snapshot lifecycle, error mapping), and the login-view strings/layout/brand/error mapping (2 live-gated tests skipped without device credentials)
 - Mocked `HttpTransport` for deterministic wire testing (the view itself needs a device; its logic is covered by the pure-`ui` tests)
 - Instrumented tests (`ManualLoginLiveTest`) skipped by default; run with device/emulator and live Core API:
 
@@ -598,17 +803,151 @@ The sample overrides the SDK code fetch with the interactive
 `GoogleSignInClient` intent via `SocialAuthClient`
 (`sdks/android/sample/src/main/java/com/open4id/example/android/SocialAuthClient.java`),
 so the account picker always appears and every sign-in returns a fresh
-server auth code. GitHub uses the per-app
-Portal bridge `https://app.open4id.com/github-callback/com.open4id.example.android`
-(registered in the GitHub OAuth App settings). The sample implements the
-Apple Custom Tab seam with the email scope
-(`response_mode=form_post`, so the share/hide-email choice appears and
-first-time sign-in carries a verified address). The per-app Portal bridge
-accepts Apple's form POST server-side and hands `?code&state` to the app
-deep link, exactly like the query flow. Apple uses the per-app Portal
-bridge `https://app.open4id.com/apple-callback/com.open4id.example.android`
-(registered in the Services ID Return URLs — no Apple-side change is
-needed for the scope; the same Return URL receives both modes).
+server auth code. GitHub, Facebook, and Apple use the base SDK's Custom
+Tab seams (`Open4IDAuthClient.openGitHubCustomTab` /
+`openFacebookCustomTab` / `openAppleCustomTab`) with the per-app Portal
+bridges
+`https://app.open4id.com/github-callback/com.open4id.example.android`,
+`https://app.open4id.com/facebook-callback/com.open4id.example.android`,
+and
+`https://app.open4id.com/apple-callback/com.open4id.example.android`
+(registered at the GitHub OAuth App, Facebook Valid OAuth Redirect URIs,
+and Apple Services ID consoles, respectively). Apple's bridge accepts
+`form_post` server-side and hands `?code&state` to the app deep link,
+exactly like the query flow; Apple requests `scope=email` with
+`response_mode=form_post` so first-time sign-in carries a verified
+address.
+
+The **Payments** screen (third panel) runs a real Play Billing client
+(sample-only — the SDK keeps zero store dependencies): enter a Play product id,
+tap **Buy with Play Billing**, and the returned purchase token is filled into
+the token field and verified against Core API automatically. The sample picks
+the Play product type from the catalog: `subscription` entries are queried as
+`SUBS` and bought with the first active base plan's offer token (a prepaid base
+plan has no offers, so its own offer token is used), everything else as
+`INAPP`. If the id is missing under the expected type it retries the other type
+and logs both attempts, which distinguishes a wrong catalog `type` from a
+product that is genuinely inactive in Play. A consumable
+catalog entry goes through `verifyConsumable`, and the sample consumes the
+token again as a no-op because the server already consumed it; every other
+purchase is acknowledged once Core API accepts the proof (so Play does not
+auto-refund it after three days). Verification needs a signed-in player, and
+purchases use a license-tester account for free test instruments. A license
+tester can also test a **sideloaded** release or debug APK: Play bypasses its
+"signed and uploaded to Play" check for testers, provided the package name
+matches the app configured in Play and the products are active. Without that
+account, a sideloaded build answers
+`ITEM_UNAVAILABLE`/`SERVICE_DISCONNECTED`, so use the Play internal-testing
+install for non-tester runs.
+
+Status 2026-10-26: a license tester bought a one-time product
+(`com.open4id.example.pkg_02`) and a subscription
+(`com.open4id.example.pkg_03`, `1 week, prepaid`) from a sideloaded vc 8
+release APK; the consumable purchase/refund pass and the Play-installed pass
+are still outstanding.
+
+The screen also registers the Play client as the SDK's proof source
+(`client.payments().setProofSource(billing::collectProofs)`), so **Restore
+purchases** and the restore that runs when the screen opens both recompute the
+ledger *and* re-submit every purchase Play reports for the account — the
+reinstall case. The sample finishes restored purchases only after Core API
+accepted the proofs (consuming consumables, acknowledging everything else) and
+logs `verified`/`rejected`/`conflict` plus `store proofs unavailable` when Play
+could not be queried. **List payment purchases** reads the player's ledger
+receipts (newest first) so the refund path is exercised: the sample logs
+`transactionRef`, status, `quantity`, `refundedQuantity`, and `consumeState`
+for each row. Every screen open logs a `payments summary` once the startup
+restore finishes: the purchased product id, status, and purchase time grouped
+by `one-time`, `subscription`, and `consumable`, followed by the active/grace
+subscriptions with their product id and expiration time in the device
+timezone. **Refresh entitlements** stays the ledger-only read.
+
+## Signed release bundle (Google Play upload)
+
+The `sample` module signs its release bundle from an untracked
+`keystore.properties` at `sdks/android/`. When the file is missing, release
+builds stay unsigned (so `assembleDebug` and CI keep working unchanged); when
+present, `sample/build.gradle` loads it and applies a `release`
+`signingConfig`.
+
+`keystore.properties` keys:
+
+```properties
+storeFile=/absolute/path/to/upload.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+Generate the upload key once (JKS, RSA 4096, long validity). This is the
+**upload key** — Google Play App Signing holds the actual app signing key:
+
+```bash
+keytool -genkeypair \
+  -keystore ~/.android/open4id-sample-upload.jks -storetype JKS \
+  -alias open4id-sample-upload \
+  -keyalg RSA -keysize 4096 -validity 10950 \
+  -dname "CN=Open4ID Sample Upload, OU=Mobile, O=Open4ID, L=Ho Chi Minh City, ST=HCMC, C=VN" \
+  -storepass '<strong-password>' -keypass '<strong-password>'
+
+keytool -list -v -keystore ~/.android/open4id-sample-upload.jks \
+  -alias open4id-sample-upload
+```
+
+Build the signed bundle, from `sdks/android/`:
+
+```bash
+gradle :sample:bundleRelease
+# output: sample/build/outputs/bundle/release/sample-release.aab
+```
+
+Confirm the signer and read its fingerprints:
+
+```bash
+keytool -printcert -jarfile sample/build/outputs/bundle/release/sample-release.aab
+```
+
+### Sideloadable APK from the bundle
+
+A license tester can buy test products from a sideloaded build, so the signed
+bundle can be turned into a universal APK without a Play install. Use the
+`bundletool` **all** jar (the Gradle-cached `bundletool` artifact is a library
+jar with no main class):
+
+```bash
+curl -LO https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+
+java -jar bundletool-all-1.18.3.jar build-apks \
+  --bundle=sample/build/outputs/bundle/release/sample-release.aab \
+  --output=sample/build/outputs/bundle/release/sample-release.apks \
+  --mode=universal --overwrite \
+  --ks=<keystore.properties storeFile> --ks-key-alias=<keyAlias> \
+  --ks-pass=pass:<storePassword> --key-pass=pass:<keyPassword>
+
+unzip -o sample/build/outputs/bundle/release/sample-release.apks universal.apk
+adb install -r -d universal.apk
+```
+
+`gradle :sample:assembleRelease` produces an equivalent APK straight from
+source; the bundle-extracted one is what Play would deliver to a matching
+device. Both are signed with the upload key, so uninstall a Play-installed
+build first (its signature is Play App Signing's). Bundle and APK outputs stay
+git-ignored.
+
+Notes:
+
+- Bump `versionCode` (and `versionName`) in `sample/build.gradle` before every
+  Play upload; a repeated `versionCode` is rejected.
+- Back up the keystore **and** `keystore.properties`. Losing them means you
+  cannot ship updates under the same upload key.
+- Google sign-in from a Play-installed build needs the **Play App Signing**
+  certificate SHA-1 (Play Console → App integrity) — not the upload key's
+  SHA-1 — linked to the Android OAuth client in the Google Cloud Console.
+- In-app products and subscriptions are created in Play Console and mapped in
+  the Open4ID Publisher Portal `payments.products` catalog; add your account
+  under Play Console → License testing so test purchases are free.
+- Key material (`*.jks`, `*.keystore`, `keystore.properties`,
+  `local.properties`) is git-ignored and must never be committed.
 
 ## ProGuard
 
