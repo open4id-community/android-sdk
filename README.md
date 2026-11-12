@@ -120,6 +120,13 @@ AuthTypes.Bootstrap bootstrap = client.bootstrap().get();
 // bootstrap.serverCallback — publisher login receipt callback (opt-in)
 ```
 
+Prefer one call for the whole launch? `client.start()` bootstraps, waits for
+the once-per-process launch restore (paid state settled), and signs in as a
+guest when nothing was stored and the application allows guest login —
+returning the session to branch on (see [Sessions](#sessions)). Create
+`playBillingPayments(activity)` **before** `start()` so the launch restore can
+submit store proofs.
+
 ### Step 3 — Drop in the login view
 
 ```java
@@ -162,8 +169,10 @@ client.deleteAccount().get(); // permanent; needs a signed-in session
 
 ### Notice:
 
-- **Remember login across restarts:** pass a `SessionStore` to
-  `configure` (see Sessions).
+- **Remember login across restarts and reinstalls:** the SDK persists the
+  session by default (private `open4id_session` SharedPreferences, wired
+  through the init provider); pass a `SessionStore` to `configure` for a
+  custom backend (see Sessions).
 - **Threading:** the view never blocks the main thread; if you call
   the headless client directly, chain the futures instead of `.get()`.
 
@@ -457,6 +466,27 @@ String webOrigin = Open4IDAuthClient.deriveWebOrigin("https://game.example.com/o
 
 ## Sessions
 
+### One-call launch (`start`)
+
+`start()` (0.8.0, iOS parity) is the whole launch in one future: bootstrap →
+wait for the once-per-process launch restore (paid state settled) → return
+the stored session, or sign in as a guest when nothing was stored and the
+application allows guest login. Concurrent callers share one sequence, and a
+failed call (offline first launch) can be retried.
+
+```java
+AuthTypes.AuthSession session = client.start().get();
+if (client.isGuestSession()) { /* anonymous player; offer linkEmail later */ }
+else { /* signed-in player */ }
+```
+
+A stored session is never replaced by a guest. Create
+`playBillingPayments(activity)` before `start()` when you want the launch
+restore to submit store proofs (the Play store needs an Activity, so unlike
+iOS the client cannot create the built-in store itself). Guest login disabled
+with nothing stored fails with `client.auth.not_authenticated` — the
+publisher's sign-in requirement.
+
 ### Refresh
 
 Access tokens live 15 minutes; the SDK never refreshes by itself.
@@ -483,19 +513,25 @@ exchanges (code, refresh, authorize, delete) never retry. A rejected
 refresh (`invalid_grant`) always clears local state, so treat it as
 signed-out and send the player back to sign-in instead of retrying.
 
-### Persistence (opt-in session stores)
+### Persistence (on by default)
 
-The client is memory-only by default and forgets the session on process
-death — it persists nothing unless you pass a `SessionStore` to
-`configure`. Every established/rotated session is saved, and
-configuring the client picks it back up (malformed or foreign-app
-snapshots are dropped). A restored session with an expired access token
-is still usable: `ensureSession()` rotates it when the refresh token
-is alive.
+The client persists the session by default: the auto-initialized context
+wires a private `SharedPreferences` store (`open4id_session`), every
+established/rotated session is saved, and configuring the client picks it
+back up (malformed or foreign-app snapshots are dropped). A restored
+session with an expired access token is still usable: `ensureSession()`
+rotates it when the refresh token is alive. The file is private app data,
+so it also rides along with Android Auto Backup / device transfer — keep
+`android:allowBackup="true"` (the modern default) and the same session,
+guest account included, comes back after an uninstall/reinstall on most
+devices. Pass `SessionStore.MemorySessionStore` to `configure` for
+memory-only (tests, kiosks), or your own `SessionStore` for a different
+backend.
 
 | Store | Survives | Default? | Note |
 |---|---|---|---|
-| `SessionStore.MemorySessionStore` | Nothing (lost on process death) | Yes | Safest; re-login every launch |
+| `SharedPreferencesSessionStore` (auto-wired) | Restart + reinstall (via Auto Backup) | Yes | Private `open4id_session` prefs; namespace per app when embedding several SDK apps |
+| `SessionStore.MemorySessionStore` | Nothing (lost on process death) | No | Safest; re-login every launch |
 | Custom `SessionStore` (`load`/`save`/`clear`) | Whatever you implement | No | Recommended: EncryptedSharedPreferences/Keystore adapter |
 
 ```java
@@ -542,6 +578,35 @@ client.onServerCallbackError(error -> {
 });
 ```
 
+## SDK events (one listener)
+
+Instead of re-publishing SDK state into your own bus listener by listener,
+register one event listener (0.8.0, the Android analogue of the iOS
+`onEvent` block). Every state change arrives as an `Open4IDEvent` with
+`kind`, `success`, `productId`, `message` (a stable error key or a short
+summary — never a token or a store proof), and `entitlements`:
+
+```java
+client.setEventListener(new Open4IDAuthClient.EventListener() {
+    @Override public void onEvent(Open4IDEvent event) {
+        switch (event.kind) {
+            case AUTH:         // sign-in/out/refresh/deletion; message names the method
+            case PRODUCTS:     // bootstrap catalog ("catalog:N") and loadProducts ("store:N")
+            case ENTITLEMENTS: // snapshot published (rows) or cleared (success=false)
+            case PURCHASE:     // verify outcome; productId + state/key
+            case RESTORE:      // "verified=N rejected=M conflict=C" (also the launch restore)
+            case TRANSACTION:  break; // reserved; Play reports those via RESTORE
+        }
+    }
+});
+```
+
+Events fire on the **main thread** by default (touch views directly); pass an
+executor to `client.setCallbackExecutor(...)` to choose another thread, or
+`null` to deliver on the publishing thread (headless services, tests). The
+typed listeners (`onAuthStateChanged`, `entitlements().onChanged`) keep
+working unchanged — the event stream is additive sugar.
+
 ## Payments and entitlements
 
 The SDK does not sell anything: Core API re-verifies every proof with the
@@ -579,6 +644,10 @@ store.loadProducts().whenComplete((rows, error) -> {
 
 // Buy: Play sheet -> server verification -> acknowledge (or consume for a
 // consumable) after the server accepted the proof. Branch on the outcome.
+// The store preflights before opening the sheet: with no session and guest
+// login disabled it throws client.auth.not_authenticated instead of
+// charging a player whose verify would be rejected. Gate your Buy buttons
+// on client.canPurchase() / client.requiresSignIn().
 store.purchase("sku_premium").whenComplete((outcome, error) -> {
     if (error != null) { /* 160003 store: retry; 140006: sticky owner */ return; }
     if (outcome.isVerified()) {
@@ -597,6 +666,46 @@ store.restore().whenComplete((result, error) -> {
     // result.conflict, result.hasConflict(), result.proofsUnavailable
 });
 ```
+
+**How verification works, and what restore cannot recover.** Core API
+never trusts the client's claim: for every proof it calls the Play
+Developer API (`purchases.products.get` for one-time/consumables,
+`purchases.subscriptionsv2.get` for subscriptions) with your
+application's service account and re-reads the authoritative state from
+Google before recording anything. Ownership is single-owner and only
+moves away from an anonymous guest: a proof for a purchase bound to
+another guest transfers it to the current player (the previous owner's
+rows are dropped), while a purchase owned by a player with an
+email/social identity is sticky and counts as `conflict`. Restore needs
+connectivity (the store collection via `queryPurchasesAsync` is local,
+the verification is server-side), and it recovers what Play still
+reports — a reinstall with a lost session therefore recovers every
+non-consumable purchase and subscription, but not consumables already
+consumed on the ledger (their delivery record stays bound to the previous
+guest; re-deliver those from your persisted `transactionRef` records
+against `payments().purchases()`), and not purchases owned by a
+credentialed account.
+
+### Subscription state per shop row
+
+`subscriptionState` (0.8.0, iOS parity) turns the snapshot plus catalog
+into the five-state answer a boolean cannot give — billing retry is not
+"expired", and "no data yet" is not "not purchased":
+
+```java
+Open4IDSubscriptionState state = client.subscriptionState("sku_premium");
+// ACTIVE  — a usable active row exists
+// GRACE   — billing retry (the server owns the window end)
+// EXPIRED — a row exists but is past its expiry (or the expired state)
+// NONE    — snapshot known, nothing usable for this product
+// UNKNOWN — no snapshot yet, product unknown to both catalogs, or a
+//           consumable (no entitlement keys). Show as "checking", never locked.
+```
+
+It reads the live bootstrap catalog and, when the product is missing
+there, the catalog captured by the built-in store's last `loadProducts()`.
+No network call. For a whole shop, iterate `payments().products().products`
+and call it per row.
 
 ### Headless proofs (bring your own store client)
 
@@ -624,7 +733,12 @@ client.payments().verifyTransaction(proof).whenComplete((rows, error) -> {
 // Restore/recompute from the server ledger. Proofs are optional and
 // additive; an invalid proof counts as `rejected`, a proof owned by an
 // anonymous player transfers the purchase to this one, and a proof owned
-// by a credentialed account counts as `conflict`.
+// by a credentialed account counts as `conflict`. The SDK already runs one
+// restore on its own — once per process, after the first bootstrap that
+// advertises a payments catalog (see payments().setAutoRestoreOnLaunch) —
+// so a purchase made in a previous run is active again after relaunch
+// without host code. An explicit restore stays useful behind a "Restore
+// purchases" button.
 client.payments().restore().whenComplete((result, error) -> {
     // result.entitlements, result.verified, result.rejected, result.conflict
     // result.hasConflict(), result.proofsUnavailable

@@ -43,6 +43,9 @@ public class MainActivity extends Activity {
     private android.window.OnBackInvokedCallback backInvokedCallback;
     /** Detaches the payment screen's entitlement listener on exit. */
     private Runnable paymentsUnsubscribe;
+    /** Logs paid-state changes on the main screen (launch restore, purchases,
+     *  sign-in/out). App-lifetime like {@link #authStateListener}. */
+    private Runnable entitlementsListener;
     // The SDK's built-in Play Billing store (created on first open); the
     // SDK owns the sheet, verification, and the acknowledge lifecycle.
     private Open4IDPlayBillingStore store;
@@ -115,6 +118,13 @@ public class MainActivity extends Activity {
                 appendLog("auth state: signed out");
             }
         });
+        // The SDK's launch restore fills paid state once per process after
+        // the first bootstrap (a stored session refreshes the ledger; a
+        // lost session signs in as a guest and restores through the store's
+        // proof source). Log the change so the automatic behavior is
+        // visible on the main screen without opening the payments screen.
+        entitlementsListener = client.entitlements().onChanged(snapshot ->
+                runOnUiThread(() -> appendLog(describePaidState(snapshot))));
     }
 
     /**
@@ -237,10 +247,12 @@ public class MainActivity extends Activity {
      * Payments screen: the SDK's built-in Play Billing store owns the whole
      * purchase lifecycle (sheet → verification → acknowledge/consume after
      * acceptance), so the example only drives it and logs every step.
-     * Opening the screen and the "Restore purchases" button both call
-     * {@code store.restore()}, which uses the proof source the store
-     * registered — so the same call recovers a purchase after a restart and
-     * after a reinstall.
+     * Since the SDK rehydrates paid state once per process after the first
+     * bootstrap (a stored session refreshes the ledger; a lost session
+     * restores through the store's proof source), the "Restore purchases"
+     * button below is mostly a demonstration — opening the screen still
+     * calls {@code store.restore()} explicitly so the flow is observable in
+     * the log.
      */
     private void openPayments() {
         try {
@@ -472,6 +484,26 @@ public class MainActivity extends Activity {
         return out.toString();
     }
 
+    /**
+     * One-line paid-state summary for the log: a {@code null} snapshot means
+     * "unknown / cleared" (signed out or not fetched yet) — never "not
+     * purchased".
+     */
+    private String describePaidState(PaymentTypes.EntitlementSnapshot snapshot) {
+        if (snapshot == null) {
+            return "paid state: entitlements cleared (signed out)";
+        }
+        if (snapshot.entitlements.isEmpty()) {
+            return "paid state: no entitlements (nothing purchased)";
+        }
+        StringBuilder out = new StringBuilder("paid state:");
+        for (PaymentTypes.Entitlement entitlement : snapshot.entitlements) {
+            out.append(' ').append(entitlement.key)
+                    .append(" = ").append(entitlement.state).append(';');
+        }
+        return out.toString();
+    }
+
     private EditText field(LinearLayout root, String initial) {
         EditText edit = new EditText(this);
         edit.setText(initial);
@@ -517,6 +549,10 @@ public class MainActivity extends Activity {
         if (paymentsUnsubscribe != null) {
             paymentsUnsubscribe.run();
             paymentsUnsubscribe = null;
+        }
+        if (entitlementsListener != null) {
+            entitlementsListener.run();
+            entitlementsListener = null;
         }
         if (store != null) {
             store.end();

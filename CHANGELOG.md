@@ -3,6 +3,89 @@
 All notable changes to the Open4ID Android SDK are documented here.
 Coordinates: `com.open4id:open4id-sdk` on Maven Central.
 
+## 0.8.0 (2026-11-12)
+
+- **One event surface (`onEvent` parity).** `client.setEventListener`
+  delivers one `Open4IDEvent` for every state change a host used to
+  re-publish itself: `AUTH` (sign-in/sign-out/refresh/deletion, with the
+  sign-in method in `message`), `PRODUCTS` (bootstrap catalog
+  `catalog:N` and `loadProducts` `store:N`), `ENTITLEMENTS` (publish and
+  the cleared signed-out snapshot), `PURCHASE` (verify outcomes,
+  including a non-grantable consumable state), and `RESTORE`
+  (verified/rejected/conflict summary — including the silent launch
+  restore). The `TRANSACTION` kind exists so one branch handles both
+  platforms: Play reports store-initiated completions through queries,
+  which surface as `RESTORE`. Events fire on the main thread by default
+  (`setCallbackExecutor` chooses another; `null` = publishing thread);
+  the typed listeners keep working unchanged.
+- **`subscriptionState(productId)` (iOS parity).** `Open4IDEntitlements`
+  and a client sugar return `ACTIVE`, `GRACE`, `EXPIRED`, `NONE`, or
+  `UNKNOWN` for one catalog product, reading the live bootstrap catalog
+  and the catalog captured by the built-in store's last `loadProducts()`.
+  `UNKNOWN` means "checking" — no snapshot yet, a product unknown to both
+  catalogs, or a consumable without entitlement keys.
+- **`start()` (iOS parity).** One-call launch: bootstrap, wait for the
+  once-per-process launch restore (paid state settled), then return the
+  stored session or sign in as a guest. Single-flight (concurrent
+  callers share one sequence), retryable after a failure, and never
+  replaces a stored session with a guest. Guest login disabled with
+  nothing stored fails with `client.auth.not_authenticated`.
+- **Guest login split from the guest button.** `guest_enabled` stays the
+  server capability (guest identities, guest-bound payments); the new
+  `guest_button_visible` bootstrap flag only decides whether the built-in
+  dialogs render "Continue as guest". It defaults to `guest_enabled` when
+  absent, so older bootstraps behave exactly as before. Anonymous checkout is
+  `guest_enabled = true` with `guest_button_visible = false`. Exposed as
+  `AuthTypes.LoginReadiness.guestButtonVisible` and
+  `AuthLayout.Model.guestButtonVisible`.
+- **Purchase preflight.** `Open4IDPlayBillingStore.purchase` now checks for a
+  usable identity before opening the Play sheet: with no session and guest
+  login disabled it throws `client.auth.not_authenticated` instead of
+  charging a player whose verify would be rejected. Hosts get
+  `Open4IDAuthClient.canPurchase()` and `requiresSignIn()` for shop gating
+  (fail-closed before the first bootstrap). The guest identity is still
+  minted only after the player confirms the sheet.
+
+## 0.7.0 (2026-11-12)
+
+- **Time-aware entitlement usability (iOS parity).**
+  `Entitlement.isUsable` now treats a cached `active` row past its
+  `expiresAt` as unusable (the server recomputes on read, but between
+  refreshes the client owns the check), while a `grace` row keeps its
+  original (past) expiry by design — the grace-window end is server-side
+  and arrives as the next state on a later read. Parsed dates
+  (`expiresAtDate()`/`grantedAtDate()`/`updatedAtDate()`,
+  `remainingSeconds()`), `has(key, atMillis)`, snapshot and client
+  `hasAny(List)`, `isPurchased(productId)` (catalog row → entitlement
+  keys), and `entitlement(key)` round out the surface.
+- **Launch restore reconciles with the store.** When a proof source is
+  registered, the stored-session hydration now also submits the store's
+  current receipts instead of only refreshing the ledger: renewals
+  recorded only by the store, and purchases made before persistence
+  existed, repair themselves at launch without a Restore tap.
+- **Session survives reinstall via Auto Backup.** The default
+  `SharedPreferences` store (`open4id_session`) is private app data and
+  rides along with Android Auto Backup / device transfer when the host
+  keeps `android:allowBackup="true"` (the modern default), so the same
+  guest account returns after an uninstall/reinstall on most devices.
+  When a backup does not restore, the launch restore (below) recovers
+  purchases from the store account. The README persistence section was
+  corrected to match the shipped default (persisted by default,
+  memory-only only outside Android).
+- **Paid state survives a restart (launch restore).** After the first
+  `bootstrap()` that advertises a payments catalog, the SDK rehydrates paid
+  state once per process: a stored session refreshes its ledger rows, and a
+  missing session signs in as a guest (when guest login is enabled) and
+  restores through the registered proof source — so a package bought in a
+  previous run is active again after relaunch without host code. The result
+  arrives through `entitlements().onChanged` like every other publish; a
+  failure stays silent and leaves paid state "unknown" (the host's explicit
+  `restore()` / `refresh()` still work unchanged). Opt out with
+  `payments().setAutoRestoreOnLaunch(false)` set before the first
+  `bootstrap()`. Creating `playBillingPayments(...)` after the bootstrap
+  runs one idempotent retry with the built-in proof source, so a store set
+  up late still repairs a session that did not survive the restart.
+
 ## 0.6.0
 
 - **Built-in Play Billing store**: `client.playBillingPayments(activity)`

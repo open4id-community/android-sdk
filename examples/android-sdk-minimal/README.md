@@ -71,6 +71,15 @@ drives the SDK's built-in Play Billing store
   and after a reinstall (fresh guest; the store proof moves the anonymous
   binding). Restored purchases are acknowledged/consumed only after the
   server accepted every proof.
+- **Paid state rehydrates on its own**: once per process, after the first
+  bootstrap, the SDK refreshes a stored session's ledger rows or signs in
+  as a guest and restores through the store's proof source. The session
+  itself persists by default (private `open4id_session` SharedPreferences,
+  which also rides Android Auto Backup), so the same player — guest
+  included — and their purchases come back after a relaunch (and, via
+  backup, usually after an uninstall/reinstall too). The main screen logs
+  the change (`paid state: …`), and the payments screen shows the live
+  rows.
 - **List payment purchases** reads the player's ledger receipts
   (`payments().purchases()`) — how a game learns about consumable
   deliveries and refunds while webhook delivery is not implemented.

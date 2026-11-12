@@ -29,7 +29,7 @@ android {
 
 dependencies {
     // Published SDK (Maven Central): consumes exactly what game developers consume.
-    implementation 'com.open4id:open4id-sdk:0.6.0'
+    implementation 'com.open4id:open4id-sdk:0.8.0'
     // Play Billing comes from the SDK itself (built-in store, 0.6.0+).
     // Play Services is compileOnly in the SDK: the host must add it as
     // implementation for Google sign-in to work at runtime. GitHub / Apple

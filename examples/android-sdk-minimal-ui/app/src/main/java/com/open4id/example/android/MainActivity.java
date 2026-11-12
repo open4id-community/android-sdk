@@ -227,10 +227,12 @@ public class MainActivity extends Activity {
      * Payments screen: the SDK's built-in Play Billing store owns the whole
      * purchase lifecycle (sheet → verification → acknowledge/consume after
      * acceptance), so the example only drives it and logs every step.
-     * Opening the screen and the "Restore purchases" button both call
-     * {@code store.restore()}, which uses the proof source the store
-     * registered — so the same call recovers a purchase after a restart and
-     * after a reinstall.
+     * Since the SDK rehydrates paid state once per process after the first
+     * bootstrap (a stored session refreshes the ledger; a lost session
+     * restores through the store's proof source), the "Restore purchases"
+     * button below is mostly a demonstration — opening the screen still
+     * calls {@code store.restore()} explicitly so the flow is observable in
+     * the log.
      */
     private void openPayments() {
         try {

@@ -69,6 +69,14 @@ its own log panel — the same surface as `../android-sdk-minimal`
 - **List payment purchases** reads the player's ledger receipts
   (`payments().purchases()`), and **Refresh entitlements** re-reads the
   snapshot — entitlement changes re-render in the log panel.
+- **Paid state rehydrates on its own**: once per process, after the first
+  bootstrap, the SDK refreshes a stored session's ledger rows or signs in
+  as a guest and restores through the store's proof source. The session
+  persists by default (private `open4id_session` SharedPreferences, which
+  also rides Android Auto Backup), so the same player — guest included —
+  and their purchases come back after a relaunch (and, via backup, usually
+  after an uninstall/reinstall too). The payments screen's entitlement
+  listener re-renders the change live.
 
 **Social sign-in:** GitHub and Apple work out of the SDK: pass the host
 `Activity` to the client (e.g. `new Open4IDAuthClient(this)` or

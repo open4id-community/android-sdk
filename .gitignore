@@ -2,3 +2,8 @@
 __MACOSX/
 build/
 .gradle/
+# Never commit local SDK paths or key material.
+local.properties
+keystore.properties
+*.jks
+*.keystore
