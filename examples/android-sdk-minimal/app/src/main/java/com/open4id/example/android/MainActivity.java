@@ -295,7 +295,7 @@ public class MainActivity extends Activity {
         store.loadProducts().whenComplete((rows, error) -> {
             if (error != null) {
                 appendLog("shop failed: " + rootMessage(error));
-                restorePurchases("startup restore (ledger only)");
+                restorePurchases("startup restore (ledger only)", false);
                 return;
             }
             for (Open4IDPlayBillingStore.PlayStoreProduct row : rows) {
@@ -303,7 +303,7 @@ public class MainActivity extends Activity {
                         + "] " + (row.isResolvable()
                                 ? row.formattedPrice : "(not in Play — Buy disabled)"));
             }
-            restorePurchases("startup restore");
+            restorePurchases("startup restore", false);
         });
 
         Button buyBtn = new Button(this);
@@ -338,7 +338,7 @@ public class MainActivity extends Activity {
 
         Button restoreBtn = new Button(this);
         restoreBtn.setText("Restore purchases");
-        restoreBtn.setOnClickListener(v -> restorePurchases("restore"));
+        restoreBtn.setOnClickListener(v -> restorePurchases("restore", true));
         screen.addView(restoreBtn);
 
         // Webhook delivery is not implemented, so refunds are learned by
@@ -411,10 +411,16 @@ public class MainActivity extends Activity {
      * guest and the proof moves an anonymous binding to it. The store
      * finishes restored purchases (consume consumables, acknowledge the
      * rest) only when the server accepted every proof.
+     *
+     * <p>{@code interactive} is the player-pressed "Restore purchases"
+     * path: it connects the Play client explicitly, includes suspended
+     * subscriptions in the query, and reports {@code storeSynced}. The
+     * startup restore stays passive. Play has no sign-in sheet and no
+     * cancellable step, so there is no cancellation case here (unlike iOS).</p>
      */
-    private void restorePurchases(String label) {
-        appendLog(label + ": restore…");
-        store.restore()
+    private void restorePurchases(String label, boolean interactive) {
+        appendLog(label + ": " + (interactive ? "interactive restore…" : "restore…"));
+        (interactive ? store.restoreInteractive() : store.restore())
                 .whenComplete((result, error) -> {
                     if (error != null) {
                         appendLog(label + " failed: " + rootMessage(error));
@@ -424,6 +430,7 @@ public class MainActivity extends Activity {
                             + " entitlement(s), verified=" + result.verified
                             + " rejected=" + result.rejected
                             + " conflict=" + result.conflict
+                            + ", storeSynced=" + result.storeSynced
                             + (result.proofsUnavailable
                                     ? ", store proofs unavailable" : ""));
                     if (result.conflict > 0) {

@@ -26,7 +26,7 @@ Published to Maven Central as `com.open4id:open4id-sdk` ([changelog](CHANGELOG.m
 
 ```gradle
 dependencies {
-    implementation 'com.open4id:open4id-sdk:0.5.0'
+    implementation 'com.open4id:open4id-sdk:1.0.0'
 }
 ```
 
@@ -165,7 +165,18 @@ client.ensureSession(30_000).get(); // no-op when still valid, rotates when near
 client.ensureSession(30_000).get(); // call before important calls
 client.signOut().get();      // revoke server-side, clear local state
 client.deleteAccount().get(); // permanent; needs a signed-in session
+
+// App-open analytics (optional, fire-and-forget — never fails the caller):
+client.appOpen();             // cold-start ping → dashboard opens/devices
+client.deviceIdentifier();    // SharedPreferences-persisted installation id
+Open4IDAuthClient.resetDeviceId(context); // debug/support reset hook
 ```
+
+The installation id is a random UUID minted locally and persisted in
+private `open4id_device` SharedPreferences. It is attribution metadata,
+not a credential: the server stores only a salted hash, and every payment
+call rides the same id beside the session (`device_id`/`device_platform`)
+— the money path never depends on it.
 
 ### Notice:
 
@@ -665,6 +676,17 @@ store.restore().whenComplete((result, error) -> {
     // result.entitlements, result.verified, result.rejected,
     // result.conflict, result.hasConflict(), result.proofsUnavailable
 });
+
+// "Restore purchases" button: the interactive variant. It connects the Play
+// client explicitly, includes suspended subscriptions in the query so a
+// billing-issue subscription still produces a proof, and sets
+// result.storeSynced = true. This is the cross-platform name a host keeps
+// alongside the iOS SDK. Play has no store sign-in sheet and no cancellable
+// step, so there is no cancellation error — an unreachable store stays
+// SdkStoreUnavailableError (160003, retryable) and makes no ledger request.
+store.restoreInteractive().whenComplete((result, error) -> {
+    // same fields as restore(), plus result.storeSynced
+});
 ```
 
 **How verification works, and what restore cannot recover.** Core API
@@ -871,11 +893,29 @@ Rules and shapes:
   of hiding a paid feature. Use `entitlements().refresh()` when only the
   ledger matters, and explicit `restore(proofs)` when the host collects
   proofs itself — neither consults the source.
+- **Interactive vs passive restore**: a "Restore purchases" button should call
+  `Open4IDPlayBillingStore.restoreInteractive()`. It connects the Play client
+  explicitly (`client.payments().restore()` and the launch restore do not) and
+  sets `result.storeSynced = true`, so `verified == 0` from that call is the
+  honest "this Play account owns none of our products" answer instead of the
+  passive path's "Play reported nothing". The interactive query also includes
+  **suspended subscriptions** (grace period or on hold), which Play omits by
+  default; the passive path keeps Play's default. Unlike iOS there is **no
+  store sign-in sheet and no cancellation error** — the purchase follows the
+  device's Play account, and Play exposes no force-refresh of its local
+  purchase cache (billing 9 removed `queryPurchaseHistoryAsync`) — so a failed
+  connection stays `SdkStoreUnavailableError` (`160003`, retryable) and makes
+  no ledger request. The passive path never sets `storeSynced`.
 - **Token freshness**: `verifyTransaction`, `restore`, and
   `entitlements().refresh()` rotate a stale access token through
   `ensureSession` before the call, so a session older than the 900 s token
   lifetime (a store sheet left open, an idle game) still works instead of
-  answering `auth.token.invalid`.
+  answering `auth.token.invalid`. The other bearer-proved player calls do the
+  same — `deleteAccount()`, `linkEmail(email, password)`, and `getUser()` — so
+  account deletion or linking does not fail with a 401
+  (`client.player.invalid` on the wire) once the token has aged out. None of
+  them mints a guest; signed out, they fail with
+  `client.auth.not_authenticated` as before.
 
 ## Error Keys
 
@@ -1015,9 +1055,12 @@ The built-in store registers its proof source on creation, so **Restore
 purchases** and the restore that runs when the screen opens both recompute the
 ledger *and* re-submit every purchase Play reports for the account — the
 reinstall case — and finish restored purchases only after Core API accepted
-the proofs (consuming consumables, acknowledging everything else). The screen
-logs `verified`/`rejected`/`conflict` plus `store proofs unavailable` when Play
-could not be queried. **List payment purchases** reads the player's ledger
+the proofs (consuming consumables, acknowledging everything else). The button
+uses the interactive call (`store.restoreInteractive()`: explicit Play
+connection, suspended subscriptions included, `storeSynced=true`); the
+startup restore stays passive. The screen logs
+`verified`/`rejected`/`conflict`, `storeSynced`, plus `store proofs
+unavailable` when Play could not be queried. **List payment purchases** reads the player's ledger
 receipts (newest first) so the refund path is exercised: the sample logs
 `transactionRef`, status, `quantity`, `refundedQuantity`, and `consumeState`
 for each row. Every screen open logs a `payments summary` once the startup
