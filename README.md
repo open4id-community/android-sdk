@@ -26,7 +26,7 @@ Published to Maven Central as `com.open4id:open4id-sdk` ([changelog](CHANGELOG.m
 
 ```gradle
 dependencies {
-    implementation 'com.open4id:open4id-sdk:0.5.0'
+    implementation 'com.open4id:open4id-sdk:1.0.2'
 }
 ```
 

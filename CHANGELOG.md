@@ -3,6 +3,86 @@
 All notable changes to the Open4ID Android SDK are documented here.
 Coordinates: `com.open4id:open4id-sdk` on Maven Central.
 
+## 1.0.2 (2026-11-21)
+
+- **Guest identity continuity**: guest authorization requests now carry the
+  persisted SDK installation identifier so repeated guest sign-in on the same
+  installation preserves the guest identity.
+- Player API request bodies consistently include the existing `device_id`
+  attribution field.
+
+## 1.1.0 (unreleased)
+
+- **Publisher events**: `trackEvent(name)` / `trackEvent(name, value)` sends
+  `POST /client/events`, the explicit counterpart of the automatic
+  `appOpen()` ping. Events are batched (20 events or 10 s), retried on
+  network/`429`/`5xx` up to five times with backoff, persisted in private
+  `open4id_events` SharedPreferences (100 events / 7 days) so a process death
+  does not lose the tail, and attributed to the signed-in player when a
+  session exists. `trackEvent()` returns an already-completed future: it
+  never blocks and never fails, and an invalid name/value is dropped.
+  `setTrackingEnabled(false)` clears the buffered and persisted queue and
+  stops sends — `appOpen()` is unaffected. Numbers are at-least-once: a retry
+  can inflate counts.
+- The app version (`versionName`) is now resolved once per process instead of
+  on every app-open/event payload.
+
+## 1.0.0 (2026-11-15)
+
+- **App-open analytics**: `appOpen()` sends the fire-and-forget cold-start
+  ping to `client/app_open` with a locally minted installation id
+  (`deviceIdentifier()`, random UUID v4 persisted in SharedPreferences file
+  `open4id_device`; memory-only outside Android or when storage fails). The
+  ping never fails the caller; the server stores only a salted hash of the
+  id. `Open4IDAuthClient.resetDeviceId(context)` is the debug/support reset
+  hook. Every payment call now rides the same id beside the session
+  (`device_id`/`device_platform` body fields) — attribution metadata the
+  server hashes and never lets alter the money path.
+- **Interactive restore for "Restore purchases" (`restoreInteractive()`).**
+  The built-in Play store gains the cross-platform analogue of the iOS
+  SDK's interactive restore. It connects the Play Billing client
+  explicitly, runs the same ledger restore as `restore()`, and sets
+  `RestoreResult.storeSynced = true`, so `verified == 0` from that call is
+  the honest "this Play account owns none of our products" answer instead
+  of the passive path's "Play reported nothing".
+- **Suspended subscriptions in the interactive query.** The interactive
+  collection asks Play for suspended subscriptions
+  (`includeSuspendedSubscriptions`), so a subscription in its grace period
+  or on hold still produces a proof. The passive `restore()` keeps Play's
+  default and omits them.
+- **No cancellation error on Android.** Unlike iOS there is no store
+  sign-in sheet and no consumer-cancellable step: the purchase follows the
+  device's Play account, and Play exposes no force-refresh of its local
+  purchase cache (billing 9 removed `queryPurchaseHistoryAsync`). A failed
+  connection stays `SdkStoreUnavailableError` (`160003`, retryable) and
+  makes no ledger request.
+- **`RestoreResult.storeSynced`** (additive, default `false`), `true` only
+  from `restoreInteractive()`.
+- **Bearer-proved player calls rotate a stale token.** `deleteAccount()`,
+  `linkEmail(email, password)`, and `getUser()` now refresh an access token
+  that has passed its 900 s lifetime before the request, through the same
+  `ensureSession` path the payment calls use. Previously they sent the stored
+  token verbatim, so ~15 min after sign-in the server answered `401`
+  (`client.player.invalid` on the wire) and, for deletion, the call failed
+  while still clearing the local session. Signed out they still fail with
+  `client.auth.not_authenticated`; none of them mints a guest. Device-confirmed
+  on a moto g86 power 5G: with an hours-old stored session restored, delete
+  succeeds where the pre-fix build answered
+  `Account deletion failed. Try again. (client.player.invalid)`.
+- The passive `restore()`, `payments().restore()`, and the automatic launch
+  restore are unchanged.
+- Tests: `Open4IDPlayBillingStoreTest` covers connect-before-collect, the
+  widened query, the connect-failure path (retryable, no ledger request),
+  the store-connected/ledger-only degradation, and the passive path never
+  setting `storeSynced`.
+- Samples: the `android-sdk-minimal` and `sdks/android/sample` **Restore
+  purchases** buttons use `store.restoreInteractive()`; the startup restore
+  stays passive.
+- Device-verified on a moto g86 power 5G with a licence-tester account: after
+  an uninstall/reinstall, two independent fresh guests each recovered the
+  purchase with no Play sheet (`verified=1`, passive `storeSynced=false`,
+  interactive `storeSynced=true`).
+
 ## 0.8.0 (2026-11-12)
 
 - **One event surface (`onEvent` parity).** `client.setEventListener`
