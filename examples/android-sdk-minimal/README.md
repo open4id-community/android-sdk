@@ -6,7 +6,7 @@ flows, no build tricks. It exercises bootstrap, email
 register/sign-in, guest sign-in, session refresh, sign-out, and the
 payments surface against the local dev Core API.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.6.0` from Maven
+It needs the published SDK (`com.open4id:open4id-sdk:1.0.0` from Maven
 Central, pinned in `app/build.gradle`) — Play Billing 9.x ships inside the
 SDK since 0.6.0: the built-in store owns the sheet, verification, and the
 acknowledge lifecycle, so the example adds no store dependency of its own.

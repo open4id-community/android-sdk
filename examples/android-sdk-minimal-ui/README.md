@@ -7,7 +7,7 @@ and delete-account come with the view; this activity only creates the
 headless client, bootstraps it, binds both to the view, and listens
 for sign-in/sign-out/account-deleted.
 
-It needs the published SDK (`com.open4id:open4id-sdk:0.6.0` from Maven
+It needs the published SDK (`com.open4id:open4id-sdk:1.0.0` from Maven
 Central, pinned in `app/build.gradle`) — Play Billing 9.x ships inside the
 SDK since 0.6.0: the built-in store owns the sheet, verification, and the
 acknowledge lifecycle, so the example adds no store dependency of its own.
